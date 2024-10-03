@@ -24,7 +24,7 @@ fn main() {
     if command == "decode" {
         let encoded_value = &args[2];
         let decoded_value = match decode_bencoded_value(encoded_value) {
-            serde_json::Value::String(val) => val.to_string(),
+            serde_json::Value::String(_) => encoded_value.to_string(),
             serde_json::Value::Number(val) => {
                 val.as_i64().expect("cannot unwrap as i64").to_string()
             }
