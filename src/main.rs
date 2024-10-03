@@ -7,14 +7,12 @@ use std::env;
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
     match encoded_value.chars().next() {
-        Some(c) if c.is_digit(10) => {
-            serde_json::Value::String(serde_bencode::from_str(encoded_value).unwrap())
-        }
-        Some('i') => serde_json::Value::String(
-            serde_bencode::from_str::<i64>(encoded_value)
-                .unwrap()
-                .to_string(),
+        Some(c) if c.is_digit(10) => serde_json::Value::String(
+            serde_bencode::from_str(encoded_value).expect("cannot decode string"),
         ),
+        Some('i') => serde_bencode::from_str::<i64>(encoded_value)
+            .expect("cannot decode number")
+            .into(),
         _ => panic!("Unhandled encoded value: {}", encoded_value),
     }
 }
@@ -25,8 +23,14 @@ fn main() {
 
     if command == "decode" {
         let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.to_string());
+        let decoded_value = match decode_bencoded_value(encoded_value) {
+            serde_json::Value::String(val) => val,
+            serde_json::Value::Number(val) => {
+                val.as_i64().expect("cannot unwrap as i64").to_string()
+            }
+            _ => panic!("unsupported value"),
+        };
+        println!("{}", decoded_value);
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -45,12 +49,12 @@ mod test {
     #[test]
     fn decode_positive_int() {
         let val = decode_bencoded_value("i52e");
-        assert_eq!("52", val);
+        assert_eq!("52", val.as_i64().unwrap().to_string());
     }
 
     #[test]
     fn decode_negative_int() {
         let val = decode_bencoded_value("i-42e");
-        assert_eq!("-42", val);
+        assert_eq!("-42", val.as_i64().unwrap().to_string());
     }
 }
