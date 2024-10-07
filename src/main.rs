@@ -19,7 +19,7 @@ fn display(value: &Value) -> String {
         Value::Object(values) => {
             let mut values = values
                 .iter()
-                .map(|(k, v)| format!("{}: {}", k, display(v)))
+                .map(|(k, v)| format!("{}:{}", k, display(v)))
                 .collect::<Vec<_>>();
             values.sort_by_key(|i| i.to_owned());
             format!("{{{}}}", values.join(","))
@@ -209,14 +209,14 @@ mod test {
     #[test]
     fn decode_dict() {
         let (val, rest) = decode("d3:foo3:bar5:helloi52ee").unwrap();
-        assert_eq!("{\"foo\": \"bar\",\"hello\": 52}", display(&val));
+        assert_eq!("{\"foo\":\"bar\",\"hello\":52}", display(&val));
         assert_eq!("", rest);
     }
 
     #[test]
     fn decode_dict_with_overflow() {
         let (val, rest) = decode("d3:fooi42eebaz").unwrap();
-        assert_eq!("{\"foo\": 42}", display(&val));
+        assert_eq!("{\"foo\":42}", display(&val));
         assert_eq!("baz", rest);
     }
 }
