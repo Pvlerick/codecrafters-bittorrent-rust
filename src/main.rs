@@ -1,6 +1,7 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::env;
 
+#[allow(dead_code)]
 fn display(value: &Value) -> String {
     match value {
         Value::String(s) => format!("\"{}\"", s.to_string()),
@@ -14,6 +15,14 @@ fn display(value: &Value) -> String {
                     .collect::<Vec<_>>()
                     .join(",")
             )
+        }
+        Value::Object(values) => {
+            let mut values = values
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, display(v)))
+                .collect::<Vec<_>>();
+            values.sort_by_key(|i| i.to_owned());
+            format!("{{{}}}", values.join(","))
         }
         _ => todo!(),
     }
@@ -37,6 +46,10 @@ const LIST_HEADER: char = 'l';
 const LIST_HEADER_LEN: usize = LIST_HEADER.len_utf8();
 const LIST_TRAILER: char = 'e';
 const LIST_TRAILER_LEN: usize = LIST_TRAILER.len_utf8();
+const DICT_HEADER: char = 'd';
+const DICT_HEADER_LEN: usize = DICT_HEADER.len_utf8();
+const DICT_TRAILER: char = 'e';
+const DICT_TRAILER_LEN: usize = DICT_TRAILER.len_utf8();
 
 fn decode(encoded: &str) -> Option<(Value, &str)> {
     let mut chars = encoded.chars().peekable();
@@ -44,6 +57,7 @@ fn decode(encoded: &str) -> Option<(Value, &str)> {
         Some(c) if c.is_digit(10) => decode_string(encoded),
         Some(&NUMBER_HEADER) => decode_int(encoded),
         Some(&LIST_HEADER) => decode_list(encoded),
+        Some(&DICT_HEADER) => decode_dict(encoded),
         Some(_) | None => todo!(),
     }
 }
@@ -94,7 +108,29 @@ fn decode_list(start: &str) -> Option<(Value, &str)> {
             start = rest;
         }
     }
-    Some((values.into(), &start[LIST_HEADER_LEN..]))
+    Some((values.into(), &start[LIST_TRAILER_LEN..]))
+}
+
+fn decode_dict(start: &str) -> Option<(Value, &str)> {
+    let mut start = &start[DICT_HEADER_LEN..];
+    let mut values = Map::new();
+    while let Some(c) = start.chars().next() {
+        if c == DICT_TRAILER {
+            break;
+        }
+        if let Some((key, rest)) = decode_string(start) {
+            if let Some((value, rest)) = decode(rest) {
+                values.insert(key.to_string(), value);
+                start = rest;
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+
+    Some((Value::Object(values), &start[DICT_TRAILER_LEN..]))
 }
 
 fn main() {
@@ -167,6 +203,20 @@ mod test {
     fn decode_list_with_overflow() {
         let (val, rest) = decode("l5:helloi52eebaz").unwrap();
         assert_eq!("[\"hello\",52]", display(&val));
+        assert_eq!("baz", rest);
+    }
+
+    #[test]
+    fn decode_dict() {
+        let (val, rest) = decode("d3:foo3:bar5:helloi52ee").unwrap();
+        assert_eq!("{\"foo\": \"bar\",\"hello\": 52}", display(&val));
+        assert_eq!("", rest);
+    }
+
+    #[test]
+    fn decode_dict_with_overflow() {
+        let (val, rest) = decode("d3:fooi42eebaz").unwrap();
+        assert_eq!("{\"foo\": 42}", display(&val));
         assert_eq!("baz", rest);
     }
 }
