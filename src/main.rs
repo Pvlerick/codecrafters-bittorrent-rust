@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, fmt::Display};
+use std::{collections::HashMap, env, error::Error, fmt::Display};
 
 const NUMBER_HEADER: u8 = b'i';
 const NUMBER_TRAILER: u8 = b'e';
@@ -140,18 +140,33 @@ impl<'a> Iterator for ItemIterator<'a> {
     }
 }
 
-// struct Info {
-//     tracker: String,
-//     len: usize,
-// }
-//
-// fn info(content: &[u8]) -> Result<Info, Box<dyn Error>> {
-//     decode_dict(&content[0..124]);
-//     Ok(Info {
-//         tracker: "".to_owned(),
-//         len: 0,
-//     })
-// }
+struct Info {
+    tracker: String,
+    len: usize,
+}
+
+fn info(content: &[u8]) -> Result<Info, Box<dyn Error>> {
+    let mut iter = ItemIterator::new(content);
+    match iter.next().expect("can't decode dict from info file") {
+        Item::Dict(map) => match (map.get("announce"), map.get("info")) {
+            (Some(Item::Bytes(tracker)), Some(Item::Dict(info))) => match info.get("length") {
+                Some(Item::Number(bytes)) => Ok(Info {
+                    tracker: std::str::from_utf8(tracker).unwrap().to_owned(),
+                    len: std::str::from_utf8(bytes)
+                        .to_owned()
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                }),
+                _ => Err("bar".into()),
+
+                _ => Err("beh".into()),
+            },
+            _ => Err("foo".into()),
+        },
+        _ => Err("bah".into()),
+    }
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -167,6 +182,8 @@ fn main() {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -250,18 +267,17 @@ mod test {
         )
     }
 
-    // #[test]
-    // fn info_file() {
-    //     let file = fs::read("tests/alice.torrent");
-    //     assert!(file.is_ok());
-    //     let info = info(&file.unwrap()).unwrap();
-    //     assert_eq!("http://disney.com/steamboat_willie", info.tracker);
-    //     assert_eq!(123, info.len);
-    // }
-    //
-    // #[test]
-    // fn info_bad_file() {
-    //     let info = info(b"foo");
-    //     assert!(info.is_err());
-    // }
+    #[test]
+    fn info_file() {
+        let info = info(b"d8:announce34:http://disney.com/steamboat_willie4:infod6:lengthi123eee")
+            .unwrap();
+        assert_eq!("http://disney.com/steamboat_willie", info.tracker);
+        assert_eq!(123, info.len);
+    }
+
+    #[test]
+    fn info_bad_file() {
+        let info = info(b"foo");
+        assert!(info.is_err());
+    }
 }
