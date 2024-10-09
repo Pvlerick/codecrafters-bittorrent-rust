@@ -174,7 +174,7 @@ fn main() {
         let mut encoded_value = ItemIterator::new(&args[2].as_bytes());
         println!("{}", encoded_value.next().unwrap());
     } else if command == "info" {
-        let info_content = info(&fs::read(&args[1]).unwrap()).unwrap();
+        let info_content = info(&fs::read(&args[2]).unwrap()).unwrap();
         println!("Tracker URL: {}", info_content.tracker);
         println!("Length: {}", info_content.len);
     } else {
