@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, error::Error, fmt::Display};
+use std::{collections::HashMap, env, error::Error, fmt::Display, fs};
 
 const NUMBER_HEADER: u8 = b'i';
 const NUMBER_TRAILER: u8 = b'e';
@@ -159,8 +159,6 @@ fn info(content: &[u8]) -> Result<Info, Box<dyn Error>> {
                         .unwrap(),
                 }),
                 _ => Err("bar".into()),
-
-                _ => Err("beh".into()),
             },
             _ => Err("foo".into()),
         },
@@ -175,6 +173,10 @@ fn main() {
     if command == "decode" {
         let mut encoded_value = ItemIterator::new(&args[2].as_bytes());
         println!("{}", encoded_value.next().unwrap());
+    } else if command == "info" {
+        let info_content = info(&fs::read(&args[1]).unwrap()).unwrap();
+        println!("Tracker URL: {}", info_content.tracker);
+        println!("Length: {}", info_content.len);
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -182,8 +184,6 @@ fn main() {
 
 #[cfg(test)]
 mod test {
-    use std::fs;
-
     use super::*;
 
     #[test]
