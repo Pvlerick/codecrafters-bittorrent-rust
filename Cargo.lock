@@ -109,6 +109,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -125,6 +131,7 @@ name = "bittorrent-starter-rust"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "hex",
@@ -827,7 +834,7 @@ version = "0.11.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cde824a14b7c14f85caff81225f411faacc04a2013f41670f41443742b1c1c55"
 dependencies = [
- "base64",
+ "base64 0.21.2",
  "bytes",
  "encoding_rs",
  "futures-core",

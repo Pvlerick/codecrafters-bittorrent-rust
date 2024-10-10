@@ -1,5 +1,7 @@
 use std::{collections::HashMap, env, error::Error, fmt::Display, fs};
 
+use base64::Engine;
+
 const NUMBER_HEADER: u8 = b'i';
 const NUMBER_TRAILER: u8 = b'e';
 const LIST_HEADER: u8 = b'l';
@@ -204,8 +206,11 @@ fn main() {
         let mut encoded_value = ItemIterator::new(&args[2].as_bytes());
         println!("{}", encoded_value.next().unwrap().unwrap());
     } else if command == "info" {
-        let content = fs::read_to_string(&args[2]).unwrap();
-        println!("#{}#", content);
+        let content = fs::read(&args[2]).unwrap();
+        println!(
+            "#{}#",
+            base64::engine::general_purpose::STANDARD.encode(&content)
+        );
 
         // let info_content = Info::parse(&fs::read(&args[2]).unwrap()).unwrap();
         // println!("Tracker URL: {}", info_content.tracker);
