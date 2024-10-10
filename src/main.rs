@@ -295,7 +295,8 @@ fn main() {
             println!("{}", hex::encode(hash));
         }
     } else if command == "peers" {
-        base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
+        let content = base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
+        println!("#{}#", content);
     } else {
         println!("unknown command: {}", args[1])
     }
