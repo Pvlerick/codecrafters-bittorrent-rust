@@ -1,5 +1,12 @@
-use std::{collections::HashMap, env, error::Error, fmt::Display, fs};
+use std::{
+    collections::HashMap,
+    env,
+    error::Error,
+    fmt::Display,
+    fs::{self, read},
+};
 
+use base64::Engine;
 use sha1::{Digest, Sha1};
 
 const NUMBER_HEADER: u8 = b'i';
@@ -287,6 +294,8 @@ fn main() {
         for hash in info_content.pieces_hashes {
             println!("{}", hex::encode(hash));
         }
+    } else if command == "peer" {
+        base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
     } else {
         println!("unknown command: {}", args[1])
     }
