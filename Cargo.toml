@@ -38,3 +38,4 @@ base64 = "0.22.1"
 
 [dev-dependencies]
 base64 = "0.22.1"
+reqwest_mock = "0.7.0"
