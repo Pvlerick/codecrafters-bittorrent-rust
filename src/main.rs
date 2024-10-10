@@ -294,7 +294,7 @@ fn main() {
         for hash in info_content.pieces_hashes {
             println!("{}", hex::encode(hash));
         }
-    } else if command == "peer" {
+    } else if command == "peers" {
         base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
     } else {
         println!("unknown command: {}", args[1])
@@ -444,5 +444,10 @@ mod test {
                 .map(|i| hex::encode(i))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn info_with_peers() {
+        assert!(false);
     }
 }
