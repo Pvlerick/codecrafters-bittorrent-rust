@@ -554,7 +554,7 @@ mod test {
             strictness: StubStrictness::MethodUrl,
         });
 
-        let response = b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt00eeee11xxxx22e";
+        let response = b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt09eeee18xxxx27e";
         let _ = client
             .stub(
                 Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
@@ -568,9 +568,9 @@ mod test {
         let bt_client = BtClient::new(client);
         assert_eq!(
             vec![
-                "116.116.116.116:12336",
-                "101.101.101.101:12593",
-                "120.120.120.120:12850"
+                "116.116.116.116:12345",
+                "101.101.101.101:12600",
+                "120.120.120.120:12855"
             ],
             bt_client.get_peers(info)
         );
