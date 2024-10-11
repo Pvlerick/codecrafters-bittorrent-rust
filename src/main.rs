@@ -1,13 +1,7 @@
-use std::{
-    collections::HashMap,
-    env,
-    error::Error,
-    fmt::Display,
-    fs::{self, read},
-};
+use std::{collections::HashMap, env, error::Error, fmt::Display, fs};
 
-use base64::Engine;
-use reqwest_mock::Client;
+use reqwest::Url;
+use reqwest_mock::{Client, DirectClient};
 use sha1::{Digest, Sha1};
 
 const NUMBER_HEADER: u8 = b'i';
@@ -278,6 +272,8 @@ impl Info {
     }
 }
 
+const PEER_ID: &str = "alice_is_1_feet_tall";
+
 struct BtClient<T: Client> {
     client: T,
 }
@@ -288,7 +284,45 @@ impl<T: Client> BtClient<T> {
     }
 
     fn get_peers(&self, info: Info) -> Vec<String> {
-        self.client.get(info.tracker)
+        let mut info_hash = String::new();
+        for c in hex::encode(info.hash).chars() {
+            info_hash.push('%');
+            info_hash.push(c);
+        }
+        let tracker = Url::parse_with_params(
+            format!("{}?info_hash={}", info.tracker, info_hash).as_str(),
+            &[
+                ("peer_id", PEER_ID),
+                ("port", "6881"),
+                ("uploaded", "0"),
+                ("downloaded", "0"),
+                ("left", format!("{}", info.len).as_str()),
+                ("compact", "1"),
+            ],
+        )
+        .unwrap();
+        let res = self.client.get(tracker).send().unwrap();
+        let mut iter = ItemIterator::new(&res.body);
+        if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
+            if let Some(Item::List(Field { payload: peers, .. })) = payload.get("peers") {
+                peers
+                    .iter()
+                    .map(|i| {
+                        if let Item::Bytes(Field { payload: peer, .. }) = i {
+                            let address: [u8; 4] = peer[0..4].try_into().unwrap();
+                            let port = u16::from_le_bytes(peer[4..6].try_into().unwrap());
+                            format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
+                        } else {
+                            panic!("baz")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                panic!("foo")
+            }
+        } else {
+            panic!("bar")
+        }
     }
 }
 
@@ -310,8 +344,14 @@ fn main() {
             println!("{}", hex::encode(hash));
         }
     } else if command == "peers" {
-        let content = base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
-        println!("#{}#", content);
+        let info_content = Info::parse(&fs::read(&args[2]).unwrap()).unwrap();
+        let client = BtClient::new(DirectClient::new());
+        for peer in client.get_peers(info_content) {
+            println!("{}", peer);
+        }
+    } else if command == "dump" {
+        // let content = base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
+        // println!("#{}#", content);
     } else {
         println!("unknown command: {}", args[1])
     }
@@ -322,7 +362,7 @@ mod test {
     use super::*;
     use base64::{engine::general_purpose, Engine};
     use reqwest::{Method, Url};
-    use reqwest_mock::{Client, StubClient, StubDefault, StubSettings, StubStrictness};
+    use reqwest_mock::{StubClient, StubDefault, StubSettings, StubStrictness};
 
     fn item_from_content<'a>(content: &'a [u8]) -> Item<'a> {
         ItemIterator::new(content).next().unwrap().unwrap()
@@ -501,18 +541,30 @@ mod test {
             strictness: StubStrictness::MethodUrl,
         });
 
-        let response = b"d8:intervali0e5:peers6:tttt00";
+        let response = b"d8:intervali0e5:peersl6:tttt006:eeee11ee";
         let _ = client
-            .stub(Url::parse("http://127.0.0.1:44381/announce").unwrap())
+            .stub(
+                Url::parse_with_params(
+                    format!("http://127.0.0.1:44381/announce?info_hash={}",  "%a%1%8%a%7%9%f%a%4%4%e%0%4%5%b%1%e%1%3%8%7%9%1%6%6%d%3%5%8%2%3%e%8%4%8%4%1%9%f%8").as_str(),
+                    &[("peer_id", PEER_ID), ("port", "6881"), ("uploaded", "0"), ("downloaded", "0"), ("left", "2097152"), ("compact", "1")],
+                )
+                .unwrap(),
+            )
             .method(Method::GET)
             .response()
             .body(response.to_vec())
             .mock();
 
-        let res = client
-            .get("http://127.0.0.1:44381/announce")
-            .send()
-            .unwrap();
-        assert_eq!("foo", res.body_to_utf8().unwrap());
+        let bt_client = BtClient::new(client);
+        assert_eq!(
+            vec!["116.116.116.116:12336", "101.101.101.101:12593"],
+            bt_client.get_peers(info)
+        );
+
+        // let res = client
+        //     .get("http://127.0.0.1:44381/announce")
+        //     .send()
+        //     .unwrap();
+        // assert_eq!("foo", res.body_to_utf8().unwrap());
     }
 }
