@@ -319,7 +319,7 @@ impl<T: Client> BtClient<T> {
                             .collect::<Vec<_>>()
                             .try_into()
                             .unwrap();
-                        let port = u16::from_le_bytes(
+                        let port = u16::from_be_bytes(
                             i[4..6]
                                 .iter()
                                 .map(|j| **j)
