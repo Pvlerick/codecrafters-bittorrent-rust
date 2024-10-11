@@ -302,6 +302,7 @@ impl<T: Client> BtClient<T> {
         )
         .unwrap();
         let res = self.client.get(tracker).send().unwrap();
+        println!("#{}#", res.body_to_utf8().unwrap());
         let mut iter = ItemIterator::new(&res.body);
         if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
             if let Some(Item::List(Field { payload: peers, .. })) = payload.get("peers") {
@@ -313,15 +314,15 @@ impl<T: Client> BtClient<T> {
                             let port = u16::from_le_bytes(peer[4..6].try_into().unwrap());
                             format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
                         } else {
-                            panic!("baz")
+                            panic!("can't find peer")
                         }
                     })
                     .collect::<Vec<_>>()
             } else {
-                panic!("foo")
+                panic!("can't find peers")
             }
         } else {
-            panic!("bar")
+            panic!("can't find response dict")
         }
     }
 }
@@ -544,10 +545,7 @@ mod test {
         let response = b"d8:intervali0e5:peersl6:tttt006:eeee11ee";
         let _ = client
             .stub(
-                Url::parse_with_params(
-                    format!("http://127.0.0.1:44381/announce?info_hash={}",  "%a%1%8%a%7%9%f%a%4%4%e%0%4%5%b%1%e%1%3%8%7%9%1%6%6%d%3%5%8%2%3%e%8%4%8%4%1%9%f%8").as_str(),
-                    &[("peer_id", PEER_ID), ("port", "6881"), ("uploaded", "0"), ("downloaded", "0"), ("left", "2097152"), ("compact", "1")],
-                )
+                Url::parse("http://127.0.0.1:44381/announce?info_hash=%a%1%8%a%7%9%f%a%4%4%e%0%4%5%b%1%e%1%3%8%7%9%1%6%6%d%3%5%8%2%3%e%8%4%8%4%1%9%f%8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
                 .unwrap(),
             )
             .method(Method::GET)
