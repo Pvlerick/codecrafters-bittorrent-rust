@@ -301,6 +301,7 @@ impl<T: Client> BtClient<T> {
             ],
         )
         .unwrap();
+        println!("get url: {}", tracker);
         let res = self.client.get(tracker).send().unwrap();
         println!("#{}#", res.body_to_utf8().unwrap());
         let mut iter = ItemIterator::new(&res.body);
