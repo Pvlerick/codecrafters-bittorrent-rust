@@ -308,17 +308,28 @@ impl<T: Client> BtClient<T> {
         println!("#{}#", res.body_to_utf8().unwrap());
         let mut iter = ItemIterator::new(&res.body);
         if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
-            if let Some(Item::List(Field { payload: peers, .. })) = payload.get("peers") {
+            if let Some(Item::Bytes(Field { payload: peers, .. })) = payload.get("peers") {
                 peers
                     .iter()
+                    .collect::<Vec<_>>()
+                    .chunks(6)
+                    .into_iter()
                     .map(|i| {
-                        if let Item::Bytes(Field { payload: peer, .. }) = i {
-                            let address: [u8; 4] = peer[0..4].try_into().unwrap();
-                            let port = u16::from_le_bytes(peer[4..6].try_into().unwrap());
-                            format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
-                        } else {
-                            panic!("can't find peer")
-                        }
+                        let address: [u8; 4] = i[0..4]
+                            .iter()
+                            .map(|j| **j)
+                            .collect::<Vec<_>>()
+                            .try_into()
+                            .unwrap();
+                        let port = u16::from_le_bytes(
+                            i[4..6]
+                                .iter()
+                                .map(|j| **j)
+                                .collect::<Vec<_>>()
+                                .try_into()
+                                .unwrap(),
+                        );
+                        format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -545,7 +556,7 @@ mod test {
             strictness: StubStrictness::MethodUrl,
         });
 
-        let response = b"d8:intervali0e5:peersl6:tttt006:eeee11ee";
+        let response = b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt00eeee11xxxx22e";
         let _ = client
             .stub(
                 Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
@@ -558,14 +569,27 @@ mod test {
 
         let bt_client = BtClient::new(client);
         assert_eq!(
-            vec!["116.116.116.116:12336", "101.101.101.101:12593"],
+            vec![
+                "116.116.116.116:12336",
+                "101.101.101.101:12593",
+                "120.120.120.120:12850"
+            ],
             bt_client.get_peers(info)
         );
-
-        // let res = client
-        //     .get("http://127.0.0.1:44381/announce")
-        //     .send()
-        //     .unwrap();
-        // assert_eq!("foo", res.body_to_utf8().unwrap());
     }
+
+    // #[test]
+    // fn sandbox() {
+    //     let val: [u8; 111] = [
+    //         100, 56, 58, 99, 111, 109, 112, 108, 101, 116, 101, 105, 50, 101, 49, 48, 58, 100, 111,
+    //         119, 110, 108, 111, 97, 100, 101, 100, 105, 49, 101, 49, 48, 58, 105, 110, 99, 111,
+    //         109, 112, 108, 101, 116, 101, 105, 49, 101, 56, 58, 105, 110, 116, 101, 114, 118, 97,
+    //         108, 105, 49, 57, 50, 49, 101, 49, 50, 58, 109, 105, 110, 32, 105, 110, 116, 101, 114,
+    //         118, 97, 108, 105, 57, 54, 48, 101, 53, 58, 112, 101, 101, 114, 115, 49, 56, 58, 188,
+    //         119, 61, 177, 26, 225, 185, 107, 13, 235, 213, 14, 88, 99, 2, 101, 26, 225, 101,
+    //     ];
+    //
+    //     println!("{}", std::str::from_utf8(&val[0..91]).unwrap());
+    //     assert!(false);
+    // }
 }
