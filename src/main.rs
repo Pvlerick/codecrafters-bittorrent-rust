@@ -284,11 +284,13 @@ impl<T: Client> BtClient<T> {
     }
 
     fn get_peers(&self, info: Info) -> Vec<String> {
-        let mut info_hash = String::new();
-        for c in hex::encode(info.hash).chars() {
-            info_hash.push('%');
-            info_hash.push(c);
-        }
+        let info_hash = hex::encode(info.hash)
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|i| format!("%{}{}", i[0], i[1]))
+            .collect::<Vec<_>>()
+            .join("");
         let tracker = Url::parse_with_params(
             format!("{}?info_hash={}", info.tracker, info_hash).as_str(),
             &[
@@ -301,9 +303,7 @@ impl<T: Client> BtClient<T> {
             ],
         )
         .unwrap();
-        println!("get url: {}", tracker);
         let res = self.client.get(tracker).send().unwrap();
-        println!("#{}#", res.body_to_utf8().unwrap());
         let mut iter = ItemIterator::new(&res.body);
         if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
             if let Some(Item::List(Field { payload: peers, .. })) = payload.get("peers") {
@@ -546,7 +546,7 @@ mod test {
         let response = b"d8:intervali0e5:peersl6:tttt006:eeee11ee";
         let _ = client
             .stub(
-                Url::parse("http://127.0.0.1:44381/announce?info_hash=%a%1%8%a%7%9%f%a%4%4%e%0%4%5%b%1%e%1%3%8%7%9%1%6%6%d%3%5%8%2%3%e%8%4%8%4%1%9%f%8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
+                Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
                 .unwrap(),
             )
             .method(Method::GET)
