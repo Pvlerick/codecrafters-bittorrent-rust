@@ -1,10 +1,8 @@
+use anyhow::Context;
 use reqwest::Url;
 use reqwest_mock::Client;
 
-use crate::{
-    bedecode::{Field, Item, ItemIterator},
-    torrent::Torrent,
-};
+use crate::{torrent::Torrent, tracker};
 
 const PEER_ID: &str = "alice_is_1_feet_tall";
 
@@ -25,7 +23,8 @@ impl<T: Client> BtClient<T> {
             .map(|i| format!("%{}{}", i[0], i[1]))
             .collect::<Vec<_>>()
             .concat();
-        let tracker = Url::parse_with_params(
+
+        let tracker_url = Url::parse_with_params(
             format!("{}?info_hash={}", torrent.announce, info_hash).as_str(),
             &[
                 ("peer_id", PEER_ID),
@@ -36,43 +35,25 @@ impl<T: Client> BtClient<T> {
                 ("compact", "1"),
             ],
         )
-        .unwrap();
-        let res = self.client.get(tracker).send().unwrap();
-        let mut iter = ItemIterator::new(&res.body);
-        if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
-            if let Some(Item::Bytes(Field { payload: peers, .. })) = payload.get("peers") {
-                Ok(peers
-                    .iter()
-                    .collect::<Vec<_>>()
-                    .chunks(6)
-                    .into_iter()
-                    .map(|i| {
-                        let address: [u8; 4] = i[0..4]
-                            .iter()
-                            .map(|j| **j)
-                            .collect::<Vec<_>>()
-                            .try_into()
-                            .unwrap();
-                        let port = u16::from_be_bytes(
-                            i[4..6]
-                                .iter()
-                                .map(|j| **j)
-                                .collect::<Vec<_>>()
-                                .try_into()
-                                .unwrap(),
-                        );
-                        format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
-                    })
-                    .collect::<Vec<_>>())
-            } else {
-                panic!("can't find peers")
-            }
-        } else {
-            panic!("can't find response dict")
-        }
+        .context("creating tracker url")?;
+
+        let res = self.client.get(tracker_url).send().unwrap();
+        //TODO: .context("get request to tracker")?;
+
+        let mut res: tracker::Response =
+            serde_bencode::from_bytes(&res.body).context("parse tracker get response")?;
+
+        res = dbg!(res);
+
+        Ok(res
+            .peers
+            .0
+            .iter()
+            .map(|i| format!("{}:{}", i.address, i.port))
+            .collect::<Vec<_>>())
     }
 
-    pub fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<String> {
+    pub fn handshake(&self, _torrent: Torrent, _peer: String) -> anyhow::Result<String> {
         todo!()
     }
 }
