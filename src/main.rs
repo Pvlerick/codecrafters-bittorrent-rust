@@ -21,6 +21,7 @@ enum Command {
     Decode { value: String },
     Info { torrent: PathBuf },
     Peers { torrent: PathBuf },
+    Handshake { torrent: PathBuf, peer: String },
 }
 
 const PEER_ID: &str = "alice_is_1_feet_tall";
@@ -88,6 +89,10 @@ impl<T: Client> BtClient<T> {
             panic!("can't find response dict")
         }
     }
+
+    fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<String> {
+        todo!()
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -119,8 +124,17 @@ fn main() -> anyhow::Result<()> {
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new(DirectClient::new());
             for peer in client.get_peers(torrent)? {
-                println!("{}", peer);
+                println!("{peer}");
             }
+            Ok(())
+        }
+        Command::Handshake { torrent, peer } => {
+            let torrent = std::fs::read(torrent).context("read torrent file")?;
+            let torrent: Torrent =
+                serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
+            let client = BtClient::new(DirectClient::new());
+            let peer_id = client.handshake(torrent, peer)?;
+            println!("Peer ID: {peer_id}");
             Ok(())
         }
     }
