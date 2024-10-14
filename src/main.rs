@@ -3,13 +3,11 @@ use std::path::PathBuf;
 use anyhow::Context;
 use bittorrent_starter_rust::{
     bedecode::{Field, Item, ItemIterator},
-    hashes::Hashes,
+    torrent::Torrent,
 };
 use clap::{Parser, Subcommand};
 use reqwest::Url;
 use reqwest_mock::{Client, DirectClient};
-use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about= None)]
@@ -23,51 +21,6 @@ enum Command {
     Decode { value: String },
     Info { torrent: PathBuf },
     Peers { torrent: PathBuf },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Torrent {
-    announce: String,
-    info: Info2,
-}
-
-impl Torrent {
-    pub fn info_hash(&self) -> anyhow::Result<Vec<u8>> {
-        let bytes = serde_bencode::to_bytes(&self.info)?;
-        let mut hasher = Sha1::new();
-        hasher.update(&bytes);
-        Ok(hasher.finalize().into_iter().collect::<Vec<_>>())
-    }
-
-    pub fn total_len(&self) -> usize {
-        match &self.info.keys {
-            Keys::SingleFile { length } => *length,
-            Keys::MultiFile { files } => files.iter().map(|i| i.length).sum(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct Info2 {
-    name: String,
-    #[serde(rename = "piece length")]
-    piece_length: usize,
-    pieces: Hashes,
-    #[serde(flatten)]
-    keys: Keys,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(untagged)]
-enum Keys {
-    SingleFile { length: usize },
-    MultiFile { files: Vec<File> },
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-struct File {
-    length: usize,
-    path: Vec<String>,
 }
 
 const PEER_ID: &str = "alice_is_1_feet_tall";
