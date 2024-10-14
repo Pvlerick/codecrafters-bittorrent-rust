@@ -1,8 +1,105 @@
-use std::{collections::HashMap, env, error::Error, fmt::Display, fs};
+use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf};
 
+use anyhow::Context;
+use clap::{Parser, Subcommand};
+use hashes::Hashes;
 use reqwest::Url;
 use reqwest_mock::{Client, DirectClient};
+use serde::Deserialize;
 use sha1::{Digest, Sha1};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about= None)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    Decode { value: String },
+    Info { torrent: PathBuf },
+    Peers { torrent: PathBuf },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Torrent {
+    announce: String,
+    info: Info2,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Info2 {
+    name: String,
+    length: usize,
+    #[serde(rename = "piece length")]
+    piece_length: usize,
+    pieces: Hashes,
+    #[serde(flatten)]
+    keys: Keys,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum Keys {
+    SingleFile { length: usize },
+    MultiFile { files: File },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct File {
+    length: usize,
+    path: Vec<String>,
+}
+
+mod hashes {
+    use std::fmt;
+
+    use serde::{
+        de::{self, Visitor},
+        Deserialize, Deserializer,
+    };
+
+    #[derive(Debug, Clone)]
+    pub struct Hashes(Vec<[u8; 29]>);
+
+    struct HashVisitor;
+
+    impl<'de> Visitor<'de> for HashVisitor {
+        type Value = Hashes;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a byte slice whose length is a multiple of 20")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if v.len() % 20 != 0 {
+                return Err(E::custom(format!(
+                    "length {} is not a multiple of 20",
+                    v.len()
+                )));
+            }
+
+            Ok(Hashes(
+                v.chunks_exact(20)
+                    .map(|i| i.try_into().expect("should not happen"))
+                    .collect(),
+            ))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Hashes {
+        fn deserialize<D>(deserializer: D) -> Result<Hashes, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_bytes(HashVisitor)
+        }
+    }
+}
 
 const NUMBER_HEADER: u8 = b'i';
 const NUMBER_TRAILER: u8 = b'e';
@@ -64,7 +161,7 @@ impl<'a> Display for Item<'a> {
                         .iter()
                         .map(|i| format!("{}", i))
                         .collect::<Vec<_>>()
-                        .join("")
+                        .concat()
                 ),
             },
             Item::Number(Field { payload, .. }) => write!(
@@ -197,6 +294,8 @@ struct DecodingError {
     message: String,
 }
 
+impl Error for DecodingError {}
+
 impl DecodingError {
     fn new<T: ToString>(message: T) -> Self {
         Self {
@@ -290,7 +389,7 @@ impl<T: Client> BtClient<T> {
             .chunks(2)
             .map(|i| format!("%{}{}", i[0], i[1]))
             .collect::<Vec<_>>()
-            .join("");
+            .concat();
         let tracker = Url::parse_with_params(
             format!("{}?info_hash={}", info.tracker, info_hash).as_str(),
             &[
@@ -339,34 +438,37 @@ impl<T: Client> BtClient<T> {
     }
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
 
-    if command == "decode" {
-        let mut encoded_value = ItemIterator::new(&args[2].as_bytes());
-        println!("{}", encoded_value.next().unwrap().unwrap());
-    } else if command == "info" {
-        let info_content = Info::parse(&fs::read(&args[2]).unwrap()).unwrap();
-        println!("Tracker URL: {}", info_content.tracker);
-        println!("Length: {}", info_content.len);
-        println!("Info Hash: {}", hex::encode(info_content.hash));
-        println!("Piece Length: {}", info_content.piece_len);
-        println!("Piece Hashes:");
-        for hash in info_content.pieces_hashes {
-            println!("{}", hex::encode(hash));
+    match args.command {
+        Command::Decode { value } => {
+            let mut encoded_value = ItemIterator::new(value.as_bytes());
+            println!("{}", encoded_value.next().unwrap()?);
+            Ok(())
         }
-    } else if command == "peers" {
-        let info_content = Info::parse(&fs::read(&args[2]).unwrap()).unwrap();
-        let client = BtClient::new(DirectClient::new());
-        for peer in client.get_peers(info_content) {
-            println!("{}", peer);
+        Command::Info { torrent } => {
+            let torrent = std::fs::read(torrent).context("read torrent file")?;
+            let torrent: Torrent =
+                serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
+            println!("Tracker URL: {}", torrent.announce);
+            // println!("Length: {}", info_content.len);
+            // println!("Info Hash: {}", hex::encode(info_content.hash));
+            // println!("Piece Length: {}", info_content.piece_len);
+            // println!("Piece Hashes:");
+            // for hash in info_content.pieces_hashes {
+            //     println!("{}", hex::encode(hash));
+            // }
+            Ok(())
         }
-    } else if command == "dump" {
-        // let content = base64::engine::general_purpose::STANDARD.encode(fs::read(&args[2]).unwrap());
-        // println!("#{}#", content);
-    } else {
-        println!("unknown command: {}", args[1])
+        Command::Peers { torrent } => {
+            let info_content = Info::parse(&fs::read(torrent).unwrap()).unwrap();
+            let client = BtClient::new(DirectClient::new());
+            for peer in client.get_peers(info_content) {
+                println!("{}", peer);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -578,16 +680,10 @@ mod test {
 
     // #[test]
     // fn sandbox() {
-    //     let val: [u8; 111] = [
-    //         100, 56, 58, 99, 111, 109, 112, 108, 101, 116, 101, 105, 50, 101, 49, 48, 58, 100, 111,
-    //         119, 110, 108, 111, 97, 100, 101, 100, 105, 49, 101, 49, 48, 58, 105, 110, 99, 111,
-    //         109, 112, 108, 101, 116, 101, 105, 49, 101, 56, 58, 105, 110, 116, 101, 114, 118, 97,
-    //         108, 105, 49, 57, 50, 49, 101, 49, 50, 58, 109, 105, 110, 32, 105, 110, 116, 101, 114,
-    //         118, 97, 108, 105, 57, 54, 48, 101, 53, 58, 112, 101, 101, 114, 115, 49, 56, 58, 188,
-    //         119, 61, 177, 26, 225, 185, 107, 13, 235, 213, 14, 88, 99, 2, 101, 26, 225, 101,
-    //     ];
-    //
-    //     println!("{}", std::str::from_utf8(&val[0..91]).unwrap());
+    //     // let x: serde_json::Value = serde_bencode::from_str("d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt09eeee18xxxx27e").unwrap();
+    //     // let x: serde_json::Value = serde_bencode::from_str("d8:completei2ee").unwrap();
+    //     let x: serde_json::Value = serde_bencode::from_bytes(b"3:foo").unwrap();
+    //     println!("{}", x);
     //     assert!(false);
     // }
 }
