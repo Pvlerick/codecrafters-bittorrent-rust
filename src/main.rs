@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf};
+use std::{collections::HashMap, error::Error, fmt::Display, path::PathBuf};
 
 use anyhow::Context;
 use bittorrent_starter_rust::hashes::Hashes;
@@ -35,6 +35,13 @@ impl Torrent {
         hasher.update(&bytes);
         Ok(hasher.finalize().into_iter().collect::<Vec<_>>())
     }
+
+    pub fn total_len(&self) -> usize {
+        match &self.info.keys {
+            Keys::SingleFile { length } => *length,
+            Keys::MultiFile { files } => files.iter().map(|i| i.length).sum(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -51,7 +58,7 @@ struct Info2 {
 #[serde(untagged)]
 enum Keys {
     SingleFile { length: usize },
-    MultiFile { files: File },
+    MultiFile { files: Vec<File> },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -269,67 +276,6 @@ impl Display for DecodingError {
     }
 }
 
-struct Info {
-    tracker: String,
-    len: usize,
-    hash: Vec<u8>,
-    piece_len: usize,
-    pieces_hashes: Vec<Vec<u8>>,
-}
-
-impl Info {
-    fn parse(content: &[u8]) -> Result<Info, Box<dyn Error>> {
-        let mut iter = ItemIterator::new(content);
-        match iter.next() {
-            Some(Ok(Item::Dict(Field { payload, .. }))) => {
-                match (payload.get("announce"), payload.get("info")) {
-                    (
-                        Some(Item::Bytes(Field {
-                            payload: tracker, ..
-                        })),
-                        Some(Item::Dict(Field { raw, payload: info })),
-                    ) => match info.get("length") {
-                        Some(Item::Number(Field { payload: bytes, .. })) => {
-                            let mut hasher = Sha1::new();
-                            hasher.update(raw);
-                            Ok(Info {
-                                tracker: std::str::from_utf8(tracker).unwrap().to_owned(),
-                                len: std::str::from_utf8(bytes)
-                                    .to_owned()
-                                    .unwrap()
-                                    .parse()
-                                    .unwrap(),
-                                hash: hasher.finalize().into_iter().collect::<Vec<_>>(),
-                                piece_len: if let Some(Item::Number(Field { payload, .. })) =
-                                    info.get("piece length")
-                                {
-                                    std::str::from_utf8(payload)
-                                        .to_owned()
-                                        .unwrap()
-                                        .parse()
-                                        .unwrap()
-                                } else {
-                                    0
-                                },
-                                pieces_hashes: if let Some(Item::Bytes(Field { payload, .. })) =
-                                    info.get("pieces")
-                                {
-                                    payload.chunks(20).map(|i| i.to_vec()).collect()
-                                } else {
-                                    Vec::new()
-                                },
-                            })
-                        }
-                        _ => Err("bar".into()),
-                    },
-                    _ => Err("foo".into()),
-                }
-            }
-            _ => Err("bah".into()),
-        }
-    }
-}
-
 const PEER_ID: &str = "alice_is_1_feet_tall";
 
 struct BtClient<T: Client> {
@@ -341,8 +287,8 @@ impl<T: Client> BtClient<T> {
         Self { client }
     }
 
-    fn get_peers(&self, info: Info) -> Vec<String> {
-        let info_hash = hex::encode(info.hash)
+    fn get_peers(&self, torrent: Torrent) -> anyhow::Result<Vec<String>> {
+        let info_hash = hex::encode(torrent.info_hash()?)
             .chars()
             .collect::<Vec<_>>()
             .chunks(2)
@@ -350,13 +296,13 @@ impl<T: Client> BtClient<T> {
             .collect::<Vec<_>>()
             .concat();
         let tracker = Url::parse_with_params(
-            format!("{}?info_hash={}", info.tracker, info_hash).as_str(),
+            format!("{}?info_hash={}", torrent.announce, info_hash).as_str(),
             &[
                 ("peer_id", PEER_ID),
                 ("port", "6881"),
                 ("uploaded", "0"),
                 ("downloaded", "0"),
-                ("left", format!("{}", info.len).as_str()),
+                ("left", format!("{}", torrent.total_len()).as_str()),
                 ("compact", "1"),
             ],
         )
@@ -365,7 +311,7 @@ impl<T: Client> BtClient<T> {
         let mut iter = ItemIterator::new(&res.body);
         if let Ok(Item::Dict(Field { payload, .. })) = iter.next().unwrap() {
             if let Some(Item::Bytes(Field { payload: peers, .. })) = payload.get("peers") {
-                peers
+                Ok(peers
                     .iter()
                     .collect::<Vec<_>>()
                     .chunks(6)
@@ -387,7 +333,7 @@ impl<T: Client> BtClient<T> {
                         );
                         format!("{}:{}", std::net::IpAddr::from(address).to_string(), port)
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>())
             } else {
                 panic!("can't find peers")
             }
@@ -411,9 +357,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             println!("Tracker URL: {}", torrent.announce);
-            if let Keys::SingleFile { length: len } = torrent.info.keys {
-                println!("Length: {}", len);
-            }
+            println!("Length: {}", torrent.total_len());
             println!("Info Hash: {}", hex::encode(torrent.info_hash()?));
             println!("Piece Length: {}", torrent.info.piece_length);
             println!("Piece Hashes:");
@@ -423,9 +367,11 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Peers { torrent } => {
-            let info_content = Info::parse(&fs::read(torrent).unwrap()).unwrap();
+            let torrent = std::fs::read(torrent).context("read torrent file")?;
+            let torrent: Torrent =
+                serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new(DirectClient::new());
-            for peer in client.get_peers(info_content) {
+            for peer in client.get_peers(torrent)? {
                 println!("{}", peer);
             }
             Ok(())
@@ -538,15 +484,22 @@ mod test {
         );
     }
 
+    fn torrent_from_base64(content: &str) -> anyhow::Result<Torrent> {
+        Ok(
+            serde_bencode::from_bytes(&general_purpose::STANDARD.decode(content)?)
+                .context("parse torrent file")?,
+        )
+    }
+
     #[test]
     fn info_with_hash_and_pieces_1() -> anyhow::Result<()> {
-        let torrent: Torrent =
-                serde_bencode::from_bytes(&general_purpose::STANDARD.decode("ZDg6YW5ub3VuY2U1NTpodHRwOi8vYml0dG9ycmVudC10ZXN0LXRyYWNrZXIuY29kZWNyYWZ0ZXJzLmlvL2Fubm91bmNlMTA6Y3JlYXRlZCBieTEzOm1rdG9ycmVudCAxLjE0OmluZm9kNjpsZW5ndGhpODIwODkyZTQ6bmFtZTE5OmNvbmdyYXR1bGF0aW9ucy5naWYxMjpwaWVjZSBsZW5ndGhpMjYyMTQ0ZTY6cGllY2VzODA6PUKiDtsc+EDNNSjTqekh22M4pGNp+IWzmIpS/7A1kZhUArbVKFlAq3aGnmycHxAflPOd4VPkaL5qY49Pve1o0C3gEaK2h/dbWDP0bM6OPpxlZQ==")?).context("parse torrent file")?;
+        let torrent = torrent_from_base64("ZDg6YW5ub3VuY2U1NTpodHRwOi8vYml0dG9ycmVudC10ZXN0LXRyYWNrZXIuY29kZWNyYWZ0ZXJzLmlvL2Fubm91bmNlMTA6Y3JlYXRlZCBieTEzOm1rdG9ycmVudCAxLjE0OmluZm9kNjpsZW5ndGhpODIwODkyZTQ6bmFtZTE5OmNvbmdyYXR1bGF0aW9ucy5naWYxMjpwaWVjZSBsZW5ndGhpMjYyMTQ0ZTY6cGllY2VzODA6PUKiDtsc+EDNNSjTqekh22M4pGNp+IWzmIpS/7A1kZhUArbVKFlAq3aGnmycHxAflPOd4VPkaL5qY49Pve1o0C3gEaK2h/dbWDP0bM6OPpxlZQ==")?;
+
         assert_eq!(
             "http://bittorrent-test-tracker.codecrafters.io/announce",
             torrent.announce
         );
-        assert_eq!(Keys::SingleFile { length: 820892 }, torrent.info.keys);
+        assert_eq!(820892, torrent.total_len());
         assert_eq!(
             "1cad4a486798d952614c394eb15e75bec587fd08",
             hex::encode(&torrent.info_hash()?)
@@ -567,19 +520,21 @@ mod test {
                 .map(|i| hex::encode(i))
                 .collect::<Vec<_>>()
         );
+
         Ok(())
     }
 
     #[test]
-    fn info_with_hash_and_pieces_2() {
-        let info = Info::parse(&general_purpose::STANDARD.decode("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=").unwrap()).unwrap();
-        assert_eq!("http://127.0.0.1:44381/announce", info.tracker);
-        assert_eq!(2097152, info.len);
+    fn info_with_hash_and_pieces_2() -> anyhow::Result<()> {
+        let torrent = torrent_from_base64("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=")?;
+
+        assert_eq!("http://127.0.0.1:44381/announce", torrent.announce);
+        assert_eq!(2097152, torrent.total_len());
         assert_eq!(
             "a18a79fa44e045b1e13879166d35823e848419f8",
-            hex::encode(info.hash)
+            hex::encode(&torrent.info_hash()?)
         );
-        assert_eq!(262144, info.piece_len);
+        assert_eq!(262144, torrent.info.piece_length);
         assert_eq!(
             vec![
                 "ddf33172599fda84f0a209a3034f79f0b8aa5e22",
@@ -591,16 +546,20 @@ mod test {
                 "fa586e20d579a4de76090e12bd0a3d9b1c539f3e",
                 "aec2d7eb1db539c2a9d24d023fb916b79234b769"
             ],
-            info.pieces_hashes
+            torrent
+                .info
+                .pieces
+                .0
                 .iter()
                 .map(|i| hex::encode(i))
                 .collect::<Vec<_>>()
         );
+        Ok(())
     }
 
     #[test]
-    fn info_request_peers() {
-        let info = Info::parse(&general_purpose::STANDARD.decode("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=").unwrap()).unwrap();
+    fn info_request_peers() -> anyhow::Result<()> {
+        let torrent = torrent_from_base64("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=")?;
 
         let mut client = StubClient::new(StubSettings {
             default: StubDefault::Error,
@@ -619,14 +578,17 @@ mod test {
             .mock();
 
         let bt_client = BtClient::new(client);
+
         assert_eq!(
             vec![
                 "116.116.116.116:12345",
                 "101.101.101.101:12600",
                 "120.120.120.120:12855"
             ],
-            bt_client.get_peers(info)
+            bt_client.get_peers(torrent)?
         );
+
+        Ok(())
     }
 
     // #[test]
