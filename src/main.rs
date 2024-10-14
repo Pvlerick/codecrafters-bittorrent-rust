@@ -1,11 +1,11 @@
 use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf};
 
 use anyhow::Context;
+use bittorrent_starter_rust::hashes::Hashes;
 use clap::{Parser, Subcommand};
-use hashes::Hashes;
 use reqwest::Url;
 use reqwest_mock::{Client, DirectClient};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
 #[derive(Parser, Debug)]
@@ -28,10 +28,18 @@ struct Torrent {
     info: Info2,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl Torrent {
+    pub fn info_hash(&self) -> anyhow::Result<Vec<u8>> {
+        let bytes = serde_bencode::to_bytes(&self.info)?;
+        let mut hasher = Sha1::new();
+        hasher.update(&bytes);
+        Ok(hasher.finalize().into_iter().collect::<Vec<_>>())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct Info2 {
     name: String,
-    length: usize,
     #[serde(rename = "piece length")]
     piece_length: usize,
     pieces: Hashes,
@@ -39,66 +47,17 @@ struct Info2 {
     keys: Keys,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 enum Keys {
     SingleFile { length: usize },
     MultiFile { files: File },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct File {
     length: usize,
     path: Vec<String>,
-}
-
-mod hashes {
-    use std::fmt;
-
-    use serde::{
-        de::{self, Visitor},
-        Deserialize, Deserializer,
-    };
-
-    #[derive(Debug, Clone)]
-    pub struct Hashes(Vec<[u8; 29]>);
-
-    struct HashVisitor;
-
-    impl<'de> Visitor<'de> for HashVisitor {
-        type Value = Hashes;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a byte slice whose length is a multiple of 20")
-        }
-
-        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            if v.len() % 20 != 0 {
-                return Err(E::custom(format!(
-                    "length {} is not a multiple of 20",
-                    v.len()
-                )));
-            }
-
-            Ok(Hashes(
-                v.chunks_exact(20)
-                    .map(|i| i.try_into().expect("should not happen"))
-                    .collect(),
-            ))
-        }
-    }
-
-    impl<'de> Deserialize<'de> for Hashes {
-        fn deserialize<D>(deserializer: D) -> Result<Hashes, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_bytes(HashVisitor)
-        }
-    }
 }
 
 const NUMBER_HEADER: u8 = b'i';
@@ -452,13 +411,15 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             println!("Tracker URL: {}", torrent.announce);
-            // println!("Length: {}", info_content.len);
-            // println!("Info Hash: {}", hex::encode(info_content.hash));
-            // println!("Piece Length: {}", info_content.piece_len);
-            // println!("Piece Hashes:");
-            // for hash in info_content.pieces_hashes {
-            //     println!("{}", hex::encode(hash));
-            // }
+            if let Keys::SingleFile { length: len } = torrent.info.keys {
+                println!("Length: {}", len);
+            }
+            println!("Info Hash: {}", hex::encode(torrent.info_hash()?));
+            println!("Piece Length: {}", torrent.info.piece_length);
+            println!("Piece Hashes:");
+            for hash in torrent.info.pieces.0 {
+                println!("{}", hex::encode(hash));
+            }
             Ok(())
         }
         Command::Peers { torrent } => {
