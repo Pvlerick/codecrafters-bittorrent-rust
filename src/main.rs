@@ -47,14 +47,14 @@ struct Info2 {
     keys: Keys,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 enum Keys {
     SingleFile { length: usize },
     MultiFile { files: File },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 struct File {
     length: usize,
     path: Vec<String>,
@@ -539,33 +539,19 @@ mod test {
     }
 
     #[test]
-    fn info_file() {
-        let info =
-            Info::parse(b"d8:announce34:http://disney.com/steamboat_willie4:infod6:lengthi123eee")
-                .unwrap();
-        assert_eq!("http://disney.com/steamboat_willie", info.tracker);
-        assert_eq!(123, info.len);
-    }
-
-    #[test]
-    fn info_bad_file() {
-        let info = Info::parse(b"foo");
-        assert!(info.is_err());
-    }
-
-    #[test]
-    fn info_with_hash_and_pieces_1() {
-        let info = Info::parse(&general_purpose::STANDARD.decode("ZDg6YW5ub3VuY2U1NTpodHRwOi8vYml0dG9ycmVudC10ZXN0LXRyYWNrZXIuY29kZWNyYWZ0ZXJzLmlvL2Fubm91bmNlMTA6Y3JlYXRlZCBieTEzOm1rdG9ycmVudCAxLjE0OmluZm9kNjpsZW5ndGhpODIwODkyZTQ6bmFtZTE5OmNvbmdyYXR1bGF0aW9ucy5naWYxMjpwaWVjZSBsZW5ndGhpMjYyMTQ0ZTY6cGllY2VzODA6PUKiDtsc+EDNNSjTqekh22M4pGNp+IWzmIpS/7A1kZhUArbVKFlAq3aGnmycHxAflPOd4VPkaL5qY49Pve1o0C3gEaK2h/dbWDP0bM6OPpxlZQ==").unwrap()).unwrap();
+    fn info_with_hash_and_pieces_1() -> anyhow::Result<()> {
+        let torrent: Torrent =
+                serde_bencode::from_bytes(&general_purpose::STANDARD.decode("ZDg6YW5ub3VuY2U1NTpodHRwOi8vYml0dG9ycmVudC10ZXN0LXRyYWNrZXIuY29kZWNyYWZ0ZXJzLmlvL2Fubm91bmNlMTA6Y3JlYXRlZCBieTEzOm1rdG9ycmVudCAxLjE0OmluZm9kNjpsZW5ndGhpODIwODkyZTQ6bmFtZTE5OmNvbmdyYXR1bGF0aW9ucy5naWYxMjpwaWVjZSBsZW5ndGhpMjYyMTQ0ZTY6cGllY2VzODA6PUKiDtsc+EDNNSjTqekh22M4pGNp+IWzmIpS/7A1kZhUArbVKFlAq3aGnmycHxAflPOd4VPkaL5qY49Pve1o0C3gEaK2h/dbWDP0bM6OPpxlZQ==")?).context("parse torrent file")?;
         assert_eq!(
             "http://bittorrent-test-tracker.codecrafters.io/announce",
-            info.tracker
+            torrent.announce
         );
-        assert_eq!(820892, info.len);
+        assert_eq!(Keys::SingleFile { length: 820892 }, torrent.info.keys);
         assert_eq!(
             "1cad4a486798d952614c394eb15e75bec587fd08",
-            hex::encode(info.hash)
+            hex::encode(&torrent.info_hash()?)
         );
-        assert_eq!(262144, info.piece_len);
+        assert_eq!(262144, torrent.info.piece_length);
         assert_eq!(
             vec![
                 "3d42a20edb1cf840cd3528d3a9e921db6338a463",
@@ -573,11 +559,15 @@ mod test {
                 "76869e6c9c1f101f94f39de153e468be6a638f4f",
                 "bded68d02de011a2b687f75b5833f46cce8e3e9c"
             ],
-            info.pieces_hashes
+            torrent
+                .info
+                .pieces
+                .0
                 .iter()
                 .map(|i| hex::encode(i))
                 .collect::<Vec<_>>()
         );
+        Ok(())
     }
 
     #[test]
