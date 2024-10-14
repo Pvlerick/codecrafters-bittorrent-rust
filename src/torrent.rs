@@ -26,7 +26,8 @@ impl Torrent {
         }
     }
 
-    pub fn from_base64(content: &str) -> anyhow::Result<Torrent> {
+    #[allow(dead_code)]
+    pub(crate) fn from_base64(content: &str) -> anyhow::Result<Torrent> {
         Ok(
             serde_bencode::from_bytes(&general_purpose::STANDARD.decode(content)?)
                 .context("parse torrent file")?,
