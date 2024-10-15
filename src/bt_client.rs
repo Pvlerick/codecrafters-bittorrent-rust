@@ -50,10 +50,8 @@ impl<T: Client> BtClient<T> {
         let res = self.client.get(tracker_url).send().unwrap();
         //TODO: .context("get request to tracker")?;
 
-        let mut res: tracker::Response =
+        let res: tracker::Response =
             serde_bencode::from_bytes(&res.body).context("parse tracker get response")?;
-
-        res = dbg!(res);
 
         Ok(res
             .peers
