@@ -1,6 +1,7 @@
 use std::{
+    fmt::Debug,
     io::{Read, Write},
-    net::{IpAddr, SocketAddr, TcpStream},
+    net::{IpAddr, TcpStream},
 };
 
 use anyhow::Context;
@@ -72,7 +73,7 @@ impl<T: Client> BtClient<T> {
         Ok(String::from_utf8(res.to_vec())?)
     }
 
-    fn shake_hands<S: Read + Write>(
+    fn shake_hands<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
         torrent: Torrent,
@@ -86,8 +87,7 @@ impl<T: Client> BtClient<T> {
             PEER_ID.as_bytes().try_into().context("invalid peer id")?,
         );
 
-        // stream.write_all(&message.as_bytes())?;
-        stream.write_all(Into::<[u8; 68]>::into(message).as_slice())?;
+        stream.write_all(&message.to_bytes())?;
         let _ = stream.flush();
         let mut buf = [0u8; 68];
         stream.read_exact(&mut buf)?;
@@ -96,6 +96,7 @@ impl<T: Client> BtClient<T> {
     }
 }
 
+#[derive(Debug)]
 struct Handshake {
     info_hash: [u8; 20],
     peer_id: [u8; 20],
@@ -104,6 +105,16 @@ struct Handshake {
 impl Handshake {
     fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
         Self { info_hash, peer_id }
+    }
+
+    fn to_bytes(&self) -> [u8; 68] {
+        let mut buf = Vec::new();
+        buf.push(19u8);
+        buf.put_slice(b"BitTorrent protocol");
+        buf.put_bytes(0u8, 8);
+        buf.put(&self.info_hash[..]);
+        buf.put(&self.peer_id[..]);
+        buf.try_into().expect("should always work")
     }
 }
 
@@ -116,21 +127,12 @@ impl From<[u8; 68]> for Handshake {
     }
 }
 
-impl Into<[u8; 68]> for Handshake {
-    fn into(self) -> [u8; 68] {
-        let mut buf = Vec::new();
-        buf.push(19u8);
-        buf.put_slice(b"BitTorrent protocol");
-        buf.put_bytes(0u8, 8);
-        buf.put(&self.info_hash[..]);
-        buf.put(&self.peer_id[..]);
-        buf.try_into().expect("should always work")
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use std::{collections::VecDeque, io::Write};
+    use std::{
+        collections::VecDeque,
+        io::{Read, Write},
+    };
 
     use base64::{engine::general_purpose, Engine};
     use bytes::BufMut;
@@ -185,27 +187,29 @@ mod test {
         let bt_client = BtClient::new(client);
 
         let mut mock_stream = VecDeque::new();
+        // Message that will be read by the client
+        let response_from_peer = [
+            19u8, 66, 105, 116, 84, 111, 114, 114, 101, 110, 116, 32, 112, 114, 111, 116, 111, 99,
+            111, 108, 0, 0, 0, 0, 0, 0, 0, 0, 161, 138, 121, 250, 68, 224, 69, 177, 225, 56, 121,
+            22, 109, 53, 130, 62, 132, 132, 25, 248, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48,
+            48, 48, 48, 48, 48, 48, 48, 48, 48,
+        ];
+        mock_stream.write_all(&response_from_peer)?;
 
-        bt_client.shake_hands(&mut mock_stream, torrent)?;
-        dbg!(&mock_stream);
+        let res = bt_client.shake_hands(&mut mock_stream, torrent)?;
+        assert_eq!(response_from_peer, res); // What is returned is what was initialy written in
+                                             // the "stream"
 
         let mut expected = Vec::with_capacity(68);
         expected.push(19u8);
         expected.put_slice(b"BitTorrent protocol");
         expected.put_bytes(0u8, 8);
         expected.put_slice(&general_purpose::STANDARD.decode("oYp5+kTgRbHhOHkWbTWCPoSEGfg=")?);
-        expected.put_slice(b"alice_is_1_feet_tall");
+        expected.put_slice(b"00000000000000000000");
 
-        assert_eq!(expected, mock_stream.make_contiguous());
-
-        mock_stream.write_all(&[19u8])?;
-        mock_stream.write_all(b"BitTorrent protocol")?;
-        mock_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 0])?;
-        mock_stream
-            .write_all(&general_purpose::STANDARD.decode("oYp5+kTgRbHhOHkWbTWCPoSEGfg=")?)?;
-        mock_stream.write_all(b"the_quick_brown_fox_")?;
-
-        assert_eq!(b"", mock_stream.make_contiguous());
+        let mut buf = [0u8; 68];
+        mock_stream.read_exact(&mut buf)?;
+        assert_eq!(expected, res);
 
         Ok(())
     }
