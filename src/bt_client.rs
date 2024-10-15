@@ -63,14 +63,14 @@ impl<T: Client> BtClient<T> {
             .collect::<Vec<_>>())
     }
 
-    pub fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<String> {
+    pub fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<[u8; 20]> {
         let peer = Peer::try_from(peer).context("parsing peer address and port")?;
         let mut tcp_stream = TcpStream::connect(Into::<(IpAddr, u16)>::into(peer))
             .context("opening socket to peer")?;
 
         let res = self.shake_hands(&mut tcp_stream, torrent)?;
 
-        Ok(hex::encode(Handshake::from(res).to_bytes()))
+        Ok(Handshake::from(res).peer_id)
     }
 
     fn shake_hands<S: Read + Write + Debug>(
