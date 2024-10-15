@@ -1,8 +1,17 @@
+use std::{
+    io::{Read, Write},
+    net::{IpAddr, SocketAddr, TcpStream},
+};
+
 use anyhow::Context;
+use bytes::BufMut;
 use reqwest::Url;
 use reqwest_mock::Client;
 
-use crate::{torrent::Torrent, tracker};
+use crate::{
+    torrent::Torrent,
+    tracker::{self, Peer},
+};
 
 const PEER_ID: &str = "alice_is_1_feet_tall";
 
@@ -49,17 +58,82 @@ impl<T: Client> BtClient<T> {
             .peers
             .0
             .iter()
-            .map(|i| format!("{}:{}", i.address, i.port))
+            .map(|i| format!("{}:{}", i.addr, i.port))
             .collect::<Vec<_>>())
     }
 
-    pub fn handshake(&self, _torrent: Torrent, _peer: String) -> anyhow::Result<String> {
-        todo!()
+    pub fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<String> {
+        let peer = Peer::try_from(peer).context("parsing peer address and port")?;
+        let mut tcp_stream = TcpStream::connect(Into::<(IpAddr, u16)>::into(peer))
+            .context("opening socket to peer")?;
+
+        let res = self.shake_hands(&mut tcp_stream, torrent)?;
+
+        Ok(String::from_utf8(res.to_vec())?)
+    }
+
+    fn shake_hands<S: Read + Write>(
+        &self,
+        stream: &mut S,
+        torrent: Torrent,
+    ) -> anyhow::Result<[u8; 68]> {
+        let message = Handshake::new(
+            torrent
+                .info_hash()?
+                .as_slice()
+                .try_into()
+                .context("invalid info hash length")?,
+            PEER_ID.as_bytes().try_into().context("invalid peer id")?,
+        );
+
+        // stream.write_all(&message.as_bytes())?;
+        stream.write_all(Into::<[u8; 68]>::into(message).as_slice())?;
+        let _ = stream.flush();
+        let mut buf = [0u8; 68];
+        stream.read_exact(&mut buf)?;
+
+        Ok(buf)
+    }
+}
+
+struct Handshake {
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+}
+
+impl Handshake {
+    fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
+        Self { info_hash, peer_id }
+    }
+}
+
+impl From<[u8; 68]> for Handshake {
+    fn from(value: [u8; 68]) -> Self {
+        Self::new(
+            value[28..48].try_into().expect("should never fail"),
+            value[48..68].try_into().expect("should never fail"),
+        )
+    }
+}
+
+impl Into<[u8; 68]> for Handshake {
+    fn into(self) -> [u8; 68] {
+        let mut buf = Vec::new();
+        buf.push(19u8);
+        buf.put_slice(b"BitTorrent protocol");
+        buf.put_bytes(0u8, 8);
+        buf.put(&self.info_hash[..]);
+        buf.put(&self.peer_id[..]);
+        buf.try_into().expect("should always work")
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::{collections::VecDeque, io::Write};
+
+    use base64::{engine::general_purpose, Engine};
+    use bytes::BufMut;
     use reqwest::{Method, Url};
     use reqwest_mock::{StubClient, StubDefault, StubSettings, StubStrictness};
 
@@ -95,6 +169,43 @@ mod test {
             ],
             bt_client.get_peers(torrent)?
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn shake_hands() -> anyhow::Result<()> {
+        let torrent = Torrent::from_base64("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=")?;
+
+        let client = StubClient::new(StubSettings {
+            default: StubDefault::Error,
+            strictness: StubStrictness::MethodUrl,
+        });
+
+        let bt_client = BtClient::new(client);
+
+        let mut mock_stream = VecDeque::new();
+
+        bt_client.shake_hands(&mut mock_stream, torrent)?;
+        dbg!(&mock_stream);
+
+        let mut expected = Vec::with_capacity(68);
+        expected.push(19u8);
+        expected.put_slice(b"BitTorrent protocol");
+        expected.put_bytes(0u8, 8);
+        expected.put_slice(&general_purpose::STANDARD.decode("oYp5+kTgRbHhOHkWbTWCPoSEGfg=")?);
+        expected.put_slice(b"alice_is_1_feet_tall");
+
+        assert_eq!(expected, mock_stream.make_contiguous());
+
+        mock_stream.write_all(&[19u8])?;
+        mock_stream.write_all(b"BitTorrent protocol")?;
+        mock_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 0])?;
+        mock_stream
+            .write_all(&general_purpose::STANDARD.decode("oYp5+kTgRbHhOHkWbTWCPoSEGfg=")?)?;
+        mock_stream.write_all(b"the_quick_brown_fox_")?;
+
+        assert_eq!(b"", mock_stream.make_contiguous());
 
         Ok(())
     }

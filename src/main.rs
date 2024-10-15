@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new(DirectClient::new());
             let peer_id = client.handshake(torrent, peer)?;
-            println!("Peer ID: {peer_id}");
+            println!("Peer ID: {}", hex::encode(peer_id));
             Ok(())
         }
     }

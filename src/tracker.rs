@@ -1,5 +1,9 @@
+use anyhow::{anyhow, Result};
 use core::fmt;
-use std::net::Ipv4Addr;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
 
 use serde::{de::Visitor, Deserialize, Deserializer};
 
@@ -14,15 +18,39 @@ pub struct Peers(pub Vec<Peer>);
 
 #[derive(Debug)]
 pub struct Peer {
-    pub address: Ipv4Addr,
+    pub addr: IpAddr,
     pub port: u16,
 }
 
 impl Peer {
     fn new(address: [u8; 4], port: [u8; 2]) -> Self {
         Self {
-            address: Ipv4Addr::new(address[0], address[1], address[2], address[3]),
+            addr: Ipv4Addr::new(address[0], address[1], address[2], address[3]).into(),
             port: u16::from_be_bytes(port),
+        }
+    }
+
+    fn from_addr_and_port(addr: IpAddr, port: u16) -> Self {
+        Self { addr, port }
+    }
+}
+
+impl Into<(IpAddr, u16)> for Peer {
+    fn into(self) -> (IpAddr, u16) {
+        (self.addr, self.port)
+    }
+}
+
+impl TryFrom<String> for Peer {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.split_once(":") {
+            Some((ip, port)) => Ok(Peer::from_addr_and_port(
+                Ipv4Addr::from_str(ip)?.into(),
+                port.parse()?,
+            )),
+            None => Err(anyhow!("invalid format, got '{}'", value)),
         }
     }
 }
