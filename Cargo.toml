@@ -34,5 +34,4 @@ sha1 = "0.10.1"                                                    # hashing
 tempfile = "3"                                                     # creating temporary directories
 thiserror = "1.0.38"                                               # error handling
 tokio = { version = "1.23.0", features = ["full"] }                # async http requests
-reqwest_mock = "0.7.0"
 base64 = "0.22.1"

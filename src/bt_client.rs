@@ -7,21 +7,43 @@ use std::{
 use anyhow::Context;
 use bytes::BufMut;
 use reqwest::Url;
-use reqwest_mock::Client;
 
 use crate::{
     torrent::Torrent,
     tracker::{self, Peer},
 };
 
+pub trait HttpClient {
+    fn get(&self, url: Url) -> anyhow::Result<Vec<u8>>;
+}
+
+impl HttpClient for reqwest::blocking::Client {
+    fn get(&self, url: Url) -> anyhow::Result<Vec<u8>> {
+        match self.get(url).send() {
+            Ok(mut response) => {
+                let mut buf = Vec::with_capacity(68);
+                response.copy_to(&mut buf)?;
+                Ok(buf)
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
 const PEER_ID: &str = "alice_is_1_feet_tall";
 
-pub struct BtClient<T: Client> {
+pub struct BtClient<T: HttpClient> {
     client: T,
 }
 
-impl<T: Client> BtClient<T> {
-    pub fn new(client: T) -> Self {
+impl BtClient<reqwest::blocking::Client> {
+    pub fn new() -> Self {
+        BtClient::<reqwest::blocking::Client>::with_client(reqwest::blocking::Client::new())
+    }
+}
+
+impl<T: HttpClient> BtClient<T> {
+    pub fn with_client(client: T) -> Self {
         Self { client }
     }
 
@@ -47,11 +69,10 @@ impl<T: Client> BtClient<T> {
         )
         .context("creating tracker url")?;
 
-        let res = self.client.get(tracker_url).send().unwrap();
-        //TODO: .context("get request to tracker")?;
+        let res = self.client.get(tracker_url)?;
 
         let res: tracker::Response =
-            serde_bencode::from_bytes(&res.body).context("parse tracker get response")?;
+            serde_bencode::from_bytes(&res).context("parse tracker get response")?;
 
         Ok(res
             .peers
@@ -132,32 +153,46 @@ mod test {
         io::{Read, Write},
     };
 
-    use reqwest::{Method, Url};
-    use reqwest_mock::{StubClient, StubDefault, StubSettings, StubStrictness};
+    use anyhow::anyhow;
+    use reqwest::Url;
 
     use crate::{bt_client::BtClient, torrent::Torrent};
+
+    use super::HttpClient;
+
+    struct MockHttpClient {
+        expected_url: Url,
+        response_body: Vec<u8>,
+    }
+
+    impl MockHttpClient {
+        fn new(expected_url: Url, response: Vec<u8>) -> Self {
+            Self {
+                expected_url,
+                response_body: response,
+            }
+        }
+    }
+
+    impl HttpClient for MockHttpClient {
+        fn get(&self, url: Url) -> anyhow::Result<Vec<u8>> {
+            if self.expected_url == url {
+                Ok(self.response_body.to_vec())
+            } else {
+                Err(anyhow!("invalid url called"))
+            }
+        }
+    }
 
     #[test]
     fn get_peers() -> anyhow::Result<()> {
         let torrent = Torrent::from_base64("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=")?;
 
-        let mut client = StubClient::new(StubSettings {
-            default: StubDefault::Error,
-            strictness: StubStrictness::MethodUrl,
-        });
+        let client = MockHttpClient::new(
+            Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")?,
+            b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt09eeee18xxxx27e".to_vec());
 
-        let response = b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt09eeee18xxxx27e";
-        let _ = client
-            .stub(
-                Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")
-                .unwrap(),
-            )
-            .method(Method::GET)
-            .response()
-            .body(response.to_vec())
-            .mock();
-
-        let bt_client = BtClient::new(client);
+        let bt_client = BtClient::with_client(client);
 
         assert_eq!(
             vec![
@@ -175,12 +210,11 @@ mod test {
     fn shake_hands() -> anyhow::Result<()> {
         let torrent = Torrent::from_base64("ZDg6YW5ub3VuY2UzMTpodHRwOi8vMTI3LjAuMC4xOjQ0MzgxL2Fubm91bmNlNDppbmZvZDY6bGVuZ3RoaTIwOTcxNTJlNDpuYW1lMTU6ZmFrZXRvcnJlbnQuaXNvMTI6cGllY2UgbGVuZ3RoaTI2MjE0NGU2OnBpZWNlczE2MDrd8zFyWZ/ahPCiCaMDT3nwuKpeInlaYYoe5SdelShDsBpWrk4UJ1Lvza4u9TLWEaRrLPe2TVeMCbOsC24Jja3AwZQ28ZJ+onuQ6xixooIKI4+lNVQZiG2exW6GzXeRND6Ted4YHK6s6xX9ETSxtLIfrQQSWyJ7Tc/6WG4g1Xmk3nYJDhK9Cj2bHFOfPq7C1+sdtTnCqdJNAj+5FreSNLdpZWU=")?;
 
-        let client = StubClient::new(StubSettings {
-            default: StubDefault::Error,
-            strictness: StubStrictness::MethodUrl,
-        });
+        let client = MockHttpClient::new(
+            Url::parse("http://127.0.0.1:44381/announce?info_hash=%a1%8a%79%fa%44%e0%45%b1%e1%38%79%16%6d%35%82%3e%84%84%19%f8&peer_id=alice_is_1_feet_tall&port=6881&uploaded=0&downloaded=0&left=2097152&compact=1")?,
+            b"d8:completei2e10:downloadedi1e10:incompletei1e8:intervali1921e12:min intervali960e5:peers18:tttt09eeee18xxxx27e".to_vec());
 
-        let bt_client = BtClient::new(client);
+        let bt_client = BtClient::with_client(client);
 
         let mut mock_stream = VecDeque::new();
         // Message that will be read by the client

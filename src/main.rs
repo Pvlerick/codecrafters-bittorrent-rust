@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use anyhow::Context;
 use bittorrent_starter_rust::{bedecode::ItemIterator, bt_client::BtClient, torrent::Torrent};
 use clap::{Parser, Subcommand};
-use reqwest_mock::DirectClient;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about= None)]
@@ -47,7 +46,7 @@ fn main() -> anyhow::Result<()> {
             let torrent = std::fs::read(torrent).context("read torrent file")?;
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
-            let client = BtClient::new(DirectClient::new());
+            let client = BtClient::new();
             for peer in client.get_peers(torrent)? {
                 println!("{peer}");
             }
@@ -57,7 +56,7 @@ fn main() -> anyhow::Result<()> {
             let torrent = std::fs::read(torrent).context("read torrent file")?;
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
-            let client = BtClient::new(DirectClient::new());
+            let client = BtClient::new();
             let peer_id = client.handshake(torrent, peer)?;
             println!("Peer ID: {}", hex::encode(peer_id));
             Ok(())

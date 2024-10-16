@@ -98,7 +98,6 @@ impl<'a> ItemIterator<'a> {
     }
 
     fn decode_bytes(&mut self) -> Result<Item<'a>, DecodingError> {
-        //TODO use an accumulator
         let number_len = self
             .working_data
             .iter()
