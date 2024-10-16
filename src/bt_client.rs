@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     io::{Read, Write},
-    net::{IpAddr, TcpStream},
+    net::{SocketAddrV4, TcpStream},
 };
 
 use anyhow::Context;
@@ -10,7 +10,7 @@ use reqwest::Url;
 
 use crate::{
     torrent::Torrent,
-    tracker::{self, Peer},
+    tracker::{self},
 };
 
 pub trait HttpClient {
@@ -78,14 +78,12 @@ impl<T: HttpClient> BtClient<T> {
             .peers
             .0
             .iter()
-            .map(|i| format!("{}:{}", i.addr, i.port))
+            .map(|i| format!("{}", i))
             .collect::<Vec<_>>())
     }
 
-    pub fn handshake(&self, torrent: Torrent, peer: String) -> anyhow::Result<[u8; 20]> {
-        let peer = Peer::try_from(peer).context("parsing peer address and port")?;
-        let mut tcp_stream = TcpStream::connect(Into::<(IpAddr, u16)>::into(peer))
-            .context("opening socket to peer")?;
+    pub fn handshake(&self, torrent: Torrent, peer: SocketAddrV4) -> anyhow::Result<[u8; 20]> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
         let res = self.shake_hands(&mut tcp_stream, torrent)?;
 

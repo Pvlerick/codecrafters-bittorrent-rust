@@ -1,23 +1,11 @@
-use std::path::PathBuf;
-
 use anyhow::Context;
-use bittorrent_starter_rust::{bedecode::ItemIterator, bt_client::BtClient, torrent::Torrent};
-use clap::{Parser, Subcommand};
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about= None)]
-struct Args {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    Decode { value: String },
-    Info { torrent: PathBuf },
-    Peers { torrent: PathBuf },
-    Handshake { torrent: PathBuf, peer: String },
-}
+use bittorrent_starter_rust::{
+    bedecode::ItemIterator,
+    bt_client::BtClient,
+    cli::{Args, Command},
+    torrent::Torrent,
+};
+use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -60,6 +48,16 @@ fn main() -> anyhow::Result<()> {
             let peer_id = client.handshake(torrent, peer)?;
             println!("Peer ID: {}", hex::encode(peer_id));
             Ok(())
+        }
+        Command::DownloadPiece {
+            ouptut,
+            torrent,
+            start,
+        } => {
+            dbg!(&ouptut);
+            dbg!(torrent);
+            dbg!(&start);
+            todo!()
         }
     }
 }
