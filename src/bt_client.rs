@@ -5,13 +5,9 @@ use std::{
 };
 
 use anyhow::Context;
-use bytes::BufMut;
 use reqwest::Url;
 
-use crate::{
-    torrent::Torrent,
-    tracker::{self},
-};
+use crate::{peer_messages::Handshake, torrent::Torrent, tracker};
 
 pub trait HttpClient {
     fn get(&self, url: Url) -> anyhow::Result<Vec<u8>>;
@@ -110,37 +106,6 @@ impl<T: HttpClient> BtClient<T> {
         stream.read_exact(&mut buf)?;
 
         Ok(buf)
-    }
-}
-
-#[derive(Debug)]
-struct Handshake {
-    info_hash: [u8; 20],
-    peer_id: [u8; 20],
-}
-
-impl Handshake {
-    fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
-        Self { info_hash, peer_id }
-    }
-
-    fn to_bytes(&self) -> [u8; 68] {
-        let mut buf = Vec::new();
-        buf.push(19u8);
-        buf.put_slice(b"BitTorrent protocol");
-        buf.put_bytes(0u8, 8);
-        buf.put(&self.info_hash[..]);
-        buf.put(&self.peer_id[..]);
-        buf.try_into().expect("should always work")
-    }
-}
-
-impl From<[u8; 68]> for Handshake {
-    fn from(value: [u8; 68]) -> Self {
-        Self::new(
-            value[28..48].try_into().expect("should never fail"),
-            value[48..68].try_into().expect("should never fail"),
-        )
     }
 }
 
