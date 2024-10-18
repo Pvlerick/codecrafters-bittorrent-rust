@@ -1,3 +1,5 @@
+use std::io::{stdout, Write};
+
 use anyhow::Context;
 use bittorrent_starter_rust::{
     bedecode::ItemIterator,
@@ -35,7 +37,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            for peer in client.get_peers(torrent)? {
+            for peer in client.get_peers(&torrent)? {
                 println!("{peer}");
             }
             Ok(())
@@ -45,19 +47,27 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            let peer_id = client.handshake(torrent, peer)?;
+            let peer_id = client.handshake(&torrent, peer)?;
             println!("Peer ID: {}", hex::encode(peer_id));
             Ok(())
         }
         Command::DownloadPiece {
-            ouptut,
+            output,
             torrent,
             start,
         } => {
-            dbg!(&ouptut);
-            dbg!(torrent);
-            dbg!(&start);
-            todo!()
+            let torrent = std::fs::read(torrent).context("read torrent file")?;
+            let torrent: Torrent =
+                serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
+            let client = BtClient::new();
+            let peers = client.get_peers(&torrent)?;
+            let peer = peers.first().expect("no peer after contacting tracker");
+            let content = client.download_piece(torrent, *peer, start)?;
+            match output {
+                Some(file) => std::fs::write(file, &content)?,
+                None => stdout().write_all(&content)?,
+            }
+            Ok(())
         }
     }
 }

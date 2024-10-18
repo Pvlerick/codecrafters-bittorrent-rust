@@ -27,7 +27,7 @@ pub enum Command {
     #[command(name = "download_piece")]
     DownloadPiece {
         #[arg(short, long)]
-        ouptut: Option<PathBuf>,
+        output: Option<PathBuf>,
         torrent: PathBuf,
         #[arg(default_value_t = 0)]
         start: usize,

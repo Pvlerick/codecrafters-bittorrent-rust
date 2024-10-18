@@ -1,9 +1,8 @@
 use anyhow::Context;
 use base64::{engine::general_purpose, Engine};
 use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
 
-use crate::hashes::Hashes;
+use crate::{hashes::Hashes, sha1};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
@@ -14,9 +13,7 @@ pub struct Torrent {
 impl Torrent {
     pub fn info_hash(&self) -> anyhow::Result<Vec<u8>> {
         let bytes = serde_bencode::to_bytes(&self.info)?;
-        let mut hasher = Sha1::new();
-        hasher.update(&bytes);
-        Ok(hasher.finalize().into_iter().collect::<Vec<_>>())
+        Ok(sha1::hash(&bytes).to_vec())
     }
 
     pub fn total_len(&self) -> usize {
@@ -32,6 +29,11 @@ impl Torrent {
             serde_bencode::from_bytes(&general_purpose::STANDARD.decode(content)?)
                 .context("parse torrent file")?,
         )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_bytes(content: &[u8]) -> anyhow::Result<Torrent> {
+        Ok(serde_bencode::from_bytes(&content).context("parse torrent file")?)
     }
 }
 

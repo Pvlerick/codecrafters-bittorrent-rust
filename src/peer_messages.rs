@@ -66,7 +66,7 @@ impl Message {
             // bitfield: <len=0001+X><id=5><bitfield>
             Message::BitField { payload } => {
                 let mut buf = Vec::new();
-                buf.put_slice(&Message::convert(payload.len() + 1)?);
+                buf.put_slice(&Message::usize_to_u32_be_bytes(payload.len() + 1)?);
                 buf.push(5);
                 buf.put_slice(&payload);
                 Ok(buf)
@@ -90,7 +90,7 @@ impl Message {
                 block,
             } => {
                 let mut buf = Vec::new();
-                buf.put_slice(&Message::convert(block.len() + 9)?);
+                buf.put_slice(&Message::usize_to_u32_be_bytes(block.len() + 9)?);
                 buf.push(7);
                 buf.put_slice(&u32::to_be_bytes(*index));
                 buf.put_slice(&u32::to_be_bytes(*begin));
@@ -100,7 +100,7 @@ impl Message {
         }
     }
 
-    fn convert(input: usize) -> anyhow::Result<[u8; 4]> {
+    fn usize_to_u32_be_bytes(input: usize) -> anyhow::Result<[u8; 4]> {
         Ok(u32::to_be_bytes(input.try_into()?))
     }
 
