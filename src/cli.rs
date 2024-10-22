@@ -30,7 +30,7 @@ pub enum Command {
         output: Option<PathBuf>,
         torrent: PathBuf,
         #[arg(default_value_t = 0)]
-        start: usize,
+        start: u32,
     },
 }
 

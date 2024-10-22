@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::{Debug, Display},
+    io::Read,
+};
 
 use anyhow::anyhow;
 use bytes::BufMut;
@@ -17,7 +20,7 @@ impl Handshake {
     pub fn to_bytes(&self) -> [u8; 68] {
         let mut buf = Vec::new();
         buf.push(19u8);
-        buf.put_slice(b"BitTorrent protocol");
+        buf.extend_from_slice(b"BitTorrent protocol");
         buf.put_bytes(0u8, 8);
         buf.put(&self.info_hash[..]);
         buf.put(&self.peer_id[..]);
@@ -66,9 +69,9 @@ impl Message {
             // bitfield: <len=0001+X><id=5><bitfield>
             Message::BitField { payload } => {
                 let mut buf = Vec::new();
-                buf.put_slice(&Message::usize_to_u32_be_bytes(payload.len() + 1)?);
+                buf.extend_from_slice(&Message::usize_to_u32_be_bytes(payload.len() + 1)?);
                 buf.push(5);
-                buf.put_slice(&payload);
+                buf.extend_from_slice(&payload);
                 Ok(buf)
             }
             // request: <len=0013><id=6><index><begin><length>
@@ -78,9 +81,9 @@ impl Message {
                 length,
             } => {
                 let mut buf = vec![0u8, 0, 0, 13, 6];
-                buf.put_slice(&u32::to_be_bytes(*index));
-                buf.put_slice(&u32::to_be_bytes(*begin));
-                buf.put_slice(&u32::to_be_bytes(*length));
+                buf.extend_from_slice(&u32::to_be_bytes(*index));
+                buf.extend_from_slice(&u32::to_be_bytes(*begin));
+                buf.extend_from_slice(&u32::to_be_bytes(*length));
                 Ok(buf)
             }
             // piece: <len=0009+X><id=7><index><begin><block>
@@ -90,11 +93,11 @@ impl Message {
                 block,
             } => {
                 let mut buf = Vec::new();
-                buf.put_slice(&Message::usize_to_u32_be_bytes(block.len() + 9)?);
+                buf.extend_from_slice(&Message::usize_to_u32_be_bytes(block.len() + 9)?);
                 buf.push(7);
-                buf.put_slice(&u32::to_be_bytes(*index));
-                buf.put_slice(&u32::to_be_bytes(*begin));
-                buf.put_slice(block);
+                buf.extend_from_slice(&u32::to_be_bytes(*index));
+                buf.extend_from_slice(&u32::to_be_bytes(*begin));
+                buf.extend_from_slice(block);
                 Ok(buf)
             }
         }
@@ -108,7 +111,6 @@ impl Message {
         if input.len() < 5 {
             return Err(anyhow!("minimum message len is 5"));
         }
-        dbg!(input);
 
         match input[4] {
             0 => Ok(Message::Choke),
@@ -132,6 +134,35 @@ impl Message {
             )),
         }
     }
+
+    pub fn read_from<T: Read>(input: &mut T) -> anyhow::Result<Message> {
+        let mut mark = [0u8; 5];
+        input.read_exact(&mut mark)?;
+        let len = u32::from_be_bytes(mark[0..4].try_into().expect("cannot fail")) as usize;
+        match mark[4] {
+            0..=2 => Message::from_bytes(&mark),
+            5..=7 => {
+                let mut message = vec![0u8; 4 + len];
+                message[..5].copy_from_slice(&mark);
+                input.read_exact(&mut message[5..len + 4])?;
+                Message::from_bytes(&message)
+            }
+            x => Err(anyhow!("unrecognized message id: {x}")),
+        }
+    }
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::BitField { .. } => write!(f, "BitField"),
+            Message::Interested => write!(f, "Interested"),
+            Message::Choke => write!(f, "Choke"),
+            Message::Unchoke => write!(f, "Unchoke"),
+            Message::Request { .. } => write!(f, "Request"),
+            Message::Piece { .. } => write!(f, "Piece"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -144,6 +175,19 @@ mod test {
             payload: b"foo".to_vec(),
         };
         let bytes = vec![0, 0, 0, 4, 5, 102, 111, 111];
+
+        assert_eq!(bytes, msg.to_bytes()?);
+        assert_eq!(msg, Message::from_bytes(&bytes)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ser_deser_message_bitfield_empty() -> anyhow::Result<()> {
+        let msg = Message::BitField {
+            payload: Vec::new(),
+        };
+        let bytes = vec![0, 0, 0, 1, 5];
 
         assert_eq!(bytes, msg.to_bytes()?);
         assert_eq!(msg, Message::from_bytes(&bytes)?);

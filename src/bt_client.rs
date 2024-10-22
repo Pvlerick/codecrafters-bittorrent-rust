@@ -1,13 +1,19 @@
 use std::{
+    collections::HashSet,
     fmt::Debug,
     io::{Read, Write},
+    iter,
     net::{SocketAddrV4, TcpStream},
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use reqwest::Url;
 
-use crate::{peer_messages::Handshake, torrent::Torrent, tracker};
+use crate::{
+    peer_messages::{Handshake, Message},
+    torrent::Torrent,
+    tracker,
+};
 
 pub trait HttpClient {
     fn get(&self, url: Url) -> anyhow::Result<Vec<u8>>;
@@ -30,17 +36,33 @@ const PEER_ID: &str = "alice_is_1_feet_tall";
 
 pub struct BtClient<T: HttpClient> {
     client: T,
+    block_size: u32,
 }
 
 impl BtClient<reqwest::blocking::Client> {
     pub fn new() -> Self {
         BtClient::<reqwest::blocking::Client>::with_client(reqwest::blocking::Client::new())
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_block_size(block_size: u32) -> Self {
+        BtClient::<reqwest::blocking::Client>::with_client_and_block_size(
+            reqwest::blocking::Client::new(),
+            block_size,
+        )
+    }
 }
 
 impl<T: HttpClient> BtClient<T> {
     pub fn with_client(client: T) -> Self {
-        Self { client }
+        Self {
+            client,
+            block_size: 16 * 1024,
+        }
+    }
+
+    fn with_client_and_block_size(client: T, block_size: u32) -> Self {
+        Self { client, block_size }
     }
 
     pub fn get_peers(&self, torrent: &Torrent) -> anyhow::Result<Vec<SocketAddrV4>> {
@@ -107,19 +129,108 @@ impl<T: HttpClient> BtClient<T> {
         &self,
         torrent: Torrent,
         peer: SocketAddrV4,
-        start: usize,
+        index: u32,
     ) -> anyhow::Result<Vec<u8>> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-        self.piece_download(&mut tcp_stream, torrent, start)
+        self.handshake(&torrent, peer)
+            .context("shaking hands with peer")?;
+        self.piece_download(&mut tcp_stream, torrent, index)
     }
 
     fn piece_download<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
         torrent: Torrent,
-        start: usize,
+        index: u32,
     ) -> anyhow::Result<Vec<u8>> {
-        todo!()
+        use crate::peer_messages::Message::*;
+        use state::State::*;
+        let mut state = WaitingForBitField;
+        let mut piece = vec![0u8; torrent.info.piece_length as usize];
+        let mut collected_blocks = HashSet::new();
+        loop {
+            if collected_blocks
+                .iter()
+                .map(|k: &(u32, u32)| k.1 as usize)
+                .sum::<usize>()
+                == piece.len()
+            {
+                break;
+            }
+
+            let msg = Message::read_from(stream)?;
+
+            match (&state, msg) {
+                (WaitingForBitField, BitField { .. }) => {
+                    stream.write_all(&Interested.to_bytes()?)?;
+                    state = WaitingForUnchoke;
+                }
+                (WaitingForUnchoke, Unchoke) => {
+                    let mut block_index = 0;
+                    let mut rest = torrent.info.piece_length;
+                    let blocks = iter::from_fn(move || {
+                        return match rest {
+                            0 => None,
+                            _ => {
+                                let ret = Some((
+                                    block_index * self.block_size,
+                                    if rest >= self.block_size {
+                                        self.block_size
+                                    } else {
+                                        rest
+                                    },
+                                ));
+                                block_index += 1;
+                                rest = if rest >= self.block_size {
+                                    rest - self.block_size
+                                } else {
+                                    0
+                                };
+                                ret
+                            }
+                        };
+                    })
+                    .collect::<Vec<_>>();
+
+                    for (offset, block_size) in blocks {
+                        stream.write_all(
+                            &Request {
+                                index,
+                                begin: offset,
+                                length: block_size,
+                            }
+                            .to_bytes()?,
+                        )?;
+                    }
+
+                    state = WaitingForPieceBlock;
+                }
+                (
+                    WaitingForPieceBlock,
+                    Piece {
+                        index: piece_index,
+                        begin,
+                        block,
+                    },
+                ) if piece_index == index => {
+                    let key = (begin, block.len() as u32);
+                    let begin = begin as usize;
+                    piece[begin..begin + block.len()].copy_from_slice(&block);
+                    collected_blocks.insert(key);
+                }
+                (_, msg) => return Err(anyhow!("unknown message received: '{}'", &msg)),
+            }
+        }
+
+        Ok(piece)
+    }
+}
+
+mod state {
+    pub enum State {
+        WaitingForBitField,
+        WaitingForUnchoke,
+        WaitingForPieceBlock,
     }
 }
 
@@ -132,7 +243,6 @@ mod test {
 
     use anyhow::anyhow;
     use base64::{engine::general_purpose, Engine};
-    use bytes::BufMut;
     use reqwest::{Method, Url};
     use reqwest_mock::{StubClient, StubDefault, StubSettings, StubStrictness};
 
@@ -218,38 +328,70 @@ mod test {
 
     #[test]
     fn piece_download() -> anyhow::Result<()> {
+        const PIECES_SIZE: usize = 100;
+        const PIECE_INDEX: usize = 0;
+        const BLOCK_SIZE: usize = 19;
         // Lorem ipsum ...
-        // len: 445
-        // piece size: 100
-        // last piece size: 45
-        // pieces count: 5
         let file_content = general_purpose::STANDARD.decode("TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQsIGNvbnNlY3RldHVyIGFkaXBpc2NpbmcgZWxpdCwgc2VkIGRvIGVpdXNtb2QgdGVtcG9yIGluY2lkaWR1bnQgdXQgbGFib3JlIGV0IGRvbG9yZSBtYWduYSBhbGlxdWEuIFV0IGVuaW0gYWQgbWluaW0gdmVuaWFtLCBxdWlzIG5vc3RydWQgZXhlcmNpdGF0aW9uIHVsbGFtY28gbGFib3JpcyBuaXNpIHV0IGFsaXF1aXAgZXggZWEgY29tbW9kbyBjb25zZXF1YXQuIER1aXMgYXV0ZSBpcnVyZSBkb2xvciBpbiByZXByZWhlbmRlcml0IGluIHZvbHVwdGF0ZSB2ZWxpdCBlc3NlIGNpbGx1bSBkb2xvcmUgZXUgZnVnaWF0IG51bGxhIHBhcmlhdHVyLiBFeGNlcHRldXIgc2ludCBvY2NhZWNhdCBjdXBpZGF0YXQgbm9uIHByb2lkZW50LCBzdW50IGluIGN1bHBhIHF1aSBvZmZpY2lhIGRlc2VydW50IG1vbGxpdCBhbmltIGlkIGVzdCBsYWJvcnVtLg==")?;
         let hashes = file_content
-            .chunks(100)
+            .chunks(PIECES_SIZE)
             .map(|i| sha1::hash(i))
             .collect::<Vec<_>>();
-        // let piece_hash = sha1::hash(&piece)?;
+        // len: 445
+        // last piece size: 45
+        // pieces count: 5
         let mut torrent_content = Vec::from(b"d8:announce31:http://127.0.0.1:44381/announce4:infod6:lengthi445e4:name15:faketorrent.iso12:piece lengthi100e6:pieces");
+        torrent_content.extend_from_slice(
+            &format!("{}:", hashes.len() * 20)
+                .bytes()
+                .collect::<Vec<_>>(),
+        );
         for hash in hashes {
-            torrent_content.put_slice(&hash);
+            torrent_content.extend_from_slice(&hash);
         }
-        torrent_content.push(101u8);
-        dbg!(&torrent_content);
+        torrent_content.extend_from_slice(b"ee");
+
         let torrent = Torrent::from_bytes(&torrent_content)?;
 
-        dbg!(&torrent);
-
         let mut mock_stream = VecDeque::new();
+
         mock_stream.write_all(&Message::BitField { payload: vec![] }.to_bytes()?)?;
         mock_stream.write_all(&Message::Unchoke.to_bytes()?)?;
-        // for piece in torrent.info.piece_length
-        // mock_stream.write_all(&Message::Piece { index: (), begin: (), block: () })
+        let piece = &file_content[PIECE_INDEX..PIECES_SIZE];
+        for block in 0..(PIECES_SIZE / BLOCK_SIZE) {
+            let begin = block * BLOCK_SIZE;
+            mock_stream.write_all(
+                &Message::Piece {
+                    index: PIECE_INDEX as u32,
+                    begin: begin as u32,
+                    block: piece[begin..begin + BLOCK_SIZE].to_vec(),
+                }
+                .to_bytes()?,
+            )?;
+        }
+        // Write final block
+        let last_block_size = PIECES_SIZE % BLOCK_SIZE;
+        let last_block_start = PIECES_SIZE - last_block_size;
+        mock_stream.write_all(
+            &Message::Piece {
+                index: PIECE_INDEX as u32,
+                begin: last_block_start as u32,
+                block: piece[last_block_start..PIECES_SIZE].to_vec(),
+            }
+            .to_bytes()?,
+        )?;
 
-        // let res = client.piece_download(stream, torrent, 0)?;
+        let client = BtClient::with_block_size(BLOCK_SIZE as u32);
+        let res = client.piece_download(&mut mock_stream, torrent, 0)?;
 
-        // let expected = vec![];
-        // assert_eq!(expected, res);
-        assert!(false);
+        assert_eq!(Message::Interested, Message::read_from(&mut mock_stream)?);
+        for _ in 0..(piece.len() / 19) {
+            assert!(matches!(
+                Message::read_from(&mut mock_stream)?,
+                Message::Request { .. }
+            ));
+        }
+        assert_eq!(file_content[0..100], res);
 
         Ok(())
     }

@@ -238,7 +238,7 @@ mod test {
     fn decode_string_with_overflow() {
         let content = b"3:foobar";
         let item = item_from_content(content);
-        assert!(matches!(item, Item::Bytes(Field {raw, ..}) if raw == &content[0..5]));
+        assert!(matches!(item, Item::Bytes(Field {raw, ..}) if raw == &content[..5]));
         assert_eq!("\"foo\"".to_owned(), format!("{}", item));
     }
 
@@ -262,7 +262,7 @@ mod test {
     fn decode_positive_int_with_overflow() {
         let content = b"i52ebar";
         let item = item_from_content(content);
-        assert!(matches!(item, Item::Number(Field {raw, ..}) if raw == &content[0..4]));
+        assert!(matches!(item, Item::Number(Field {raw, ..}) if raw == &content[..4]));
         assert_eq!("52".to_owned(), format!("{}", item));
     }
 
@@ -278,7 +278,7 @@ mod test {
     fn decode_list_with_overflow() {
         let content = b"l3:bazi42eebaz";
         let item = item_from_content(content);
-        assert!(matches!(item, Item::List(Field { raw, .. }) if raw == &content[0..11]));
+        assert!(matches!(item, Item::List(Field { raw, .. }) if raw == &content[..11]));
         assert_eq!("[\"baz\",42]".to_owned(), format!("{}", item));
     }
 
@@ -297,7 +297,7 @@ mod test {
     fn decode_dict_with_overflow() {
         let content = b"d3:fooi42eebaz";
         let item = item_from_content(content);
-        assert!(matches!(item, Item::Dict(Field { raw, .. }) if raw == &content[0..11]));
+        assert!(matches!(item, Item::Dict(Field { raw, .. }) if raw == &content[..11]));
         assert_eq!("{\"foo\":42}".to_owned(), format!("{}", item));
     }
 
