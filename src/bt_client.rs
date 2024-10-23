@@ -230,12 +230,15 @@ impl<T: HttpClient> BtClient<T> {
     ) -> anyhow::Result<Vec<u8>> {
         let mut file = vec![0u8; torrent.total_len()];
         for piece_info in torrent.pieces_info() {
+            eprintln!("getting piece {}", piece_info.index);
             let piece = self.piece_download(
                 stream,
                 torrent,
                 piece_info.index.try_into().context("usize to u32")?,
             )?;
+            eprintln!("got piece {}", piece_info.index);
             file[piece_info.offset..piece_info.offset + piece_info.length].copy_from_slice(&piece);
+            eprintln!("wrote piece {} to file vec", piece_info.index);
         }
 
         Ok(file)
