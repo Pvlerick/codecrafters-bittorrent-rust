@@ -3,7 +3,7 @@ use std::{
     io::Read,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use bytes::BufMut;
 
 #[derive(Debug)]
@@ -137,8 +137,10 @@ impl Message {
 
     pub fn read_from<T: Read>(input: &mut T) -> anyhow::Result<Message> {
         let mut mark = [0u8; 5];
-        input.read_exact(&mut mark)?;
-        let len = u32::from_be_bytes(mark[0..4].try_into().expect("cannot fail")) as usize;
+        input.read_exact(&mut mark).context("reading from input")?;
+        let len: usize = u32::from_be_bytes(mark[0..4].try_into().context("cannot fail")?)
+            .try_into()
+            .context("converting u32 to usize")?;
         match mark[4] {
             0..=2 => Message::from_bytes(&mark),
             5..=7 => {
