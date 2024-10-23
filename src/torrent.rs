@@ -23,6 +23,62 @@ impl Torrent {
         }
     }
 
+    fn piece_length(&self) -> usize {
+        self.info
+            .piece_length
+            .try_into()
+            .expect("usize can't hold a u32, what kind of architecture are you running this on?")
+    }
+
+    pub fn pieces_count(&self) -> usize {
+        self.info.pieces.0.len()
+    }
+
+    fn last_piece_size(&self) -> usize {
+        match self.total_len() % self.piece_length() {
+            0 => self.piece_length(),
+            len => len,
+        }
+    }
+
+    pub fn pieces_info(&self) -> Vec<PieceInfo> {
+        let mut info = Vec::new();
+        for i in 0..self.pieces_count() {
+            info.push(PieceInfo {
+                index: i,
+                offset: i * self.piece_length(),
+                length: if i == self.pieces_count() - 1 {
+                    self.last_piece_size()
+                } else {
+                    self.piece_length()
+                },
+            })
+        }
+        info
+    }
+
+    /// A vector containing block division for the given piece in the given block size
+    pub fn blocks_info(&self, piece_index: usize, block_size: usize) -> Option<Vec<BlockInfo>> {
+        let pieces_info = self.pieces_info();
+        let pieces_info = pieces_info.get(piece_index)?;
+        let mut info = Vec::new();
+        let blocks_count = (pieces_info.length + block_size - 1) / block_size;
+        for i in 0..blocks_count {
+            info.push(BlockInfo {
+                offset: i * block_size,
+                length: if i == blocks_count - 1 {
+                    match pieces_info.length % block_size {
+                        0 => block_size,
+                        len => len,
+                    }
+                } else {
+                    block_size
+                },
+            })
+        }
+        Some(info)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn from_base64(content: &str) -> anyhow::Result<Torrent> {
         Ok(
@@ -35,6 +91,19 @@ impl Torrent {
     pub(crate) fn from_bytes(content: &[u8]) -> anyhow::Result<Torrent> {
         Ok(serde_bencode::from_bytes(&content).context("parse torrent file")?)
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PieceInfo {
+    pub index: usize,
+    pub offset: usize,
+    pub length: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct BlockInfo {
+    pub offset: usize,
+    pub length: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,7 +131,9 @@ pub struct File {
 
 #[cfg(test)]
 mod test {
-    use crate::torrent::Torrent;
+    use anyhow::Context;
+
+    use crate::torrent::{BlockInfo, PieceInfo, Torrent};
 
     #[test]
     fn torrent_with_hash_and_pieces_1() -> anyhow::Result<()> {
@@ -127,6 +198,114 @@ mod test {
                 .map(|i| hex::encode(i))
                 .collect::<Vec<_>>()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn torrent_shorthands_1() -> anyhow::Result<()> {
+        const FILE_SIZE: usize = 450;
+        const PIECES_SIZE: usize = 120;
+        let pieces_count: usize = (FILE_SIZE + PIECES_SIZE - 1) / PIECES_SIZE;
+        let mut torrent_content = Vec::from(format!("d8:announce31:http://127.0.0.1:44381/announce4:infod6:lengthi{FILE_SIZE}e4:name15:faketorrent.iso12:piece lengthi{PIECES_SIZE}e6:pieces{}:", pieces_count * 20).as_bytes());
+        torrent_content.extend_from_slice(&vec![0; pieces_count * 20]);
+        torrent_content.extend_from_slice(b"ee");
+
+        let torrent = Torrent::from_bytes(&torrent_content)?;
+
+        assert_eq!(450, torrent.total_len());
+        assert_eq!(4, torrent.pieces_count());
+        assert_eq!(90, torrent.last_piece_size());
+        assert_eq!(
+            Some(&PieceInfo {
+                index: 0,
+                offset: 0,
+                length: 120
+            }),
+            torrent.pieces_info().get(0)
+        );
+        assert_eq!(
+            Some(&PieceInfo {
+                index: 3,
+                offset: 360,
+                length: 90
+            }),
+            torrent.pieces_info().last()
+        );
+        assert_eq!(
+            Some(&BlockInfo {
+                offset: 0,
+                length: 60,
+            }),
+            torrent
+                .blocks_info(0, 60)
+                .context("requested piece does not exist")?
+                .get(0)
+        );
+        assert_eq!(
+            Some(&BlockInfo {
+                offset: 82,
+                length: 8,
+            }),
+            torrent
+                .blocks_info(3, 41)
+                .context("requested piece does not exist")?
+                .get(2)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn torrent_shorthands_2() -> anyhow::Result<()> {
+        const FILE_SIZE: usize = 300;
+        const PIECES_SIZE: usize = 100;
+        let pieces_count: usize = (FILE_SIZE + PIECES_SIZE - 1) / PIECES_SIZE;
+        let mut torrent_content = Vec::from(format!("d8:announce31:http://127.0.0.1:44381/announce4:infod6:lengthi{FILE_SIZE}e4:name15:faketorrent.iso12:piece lengthi{PIECES_SIZE}e6:pieces{}:", pieces_count * 20).as_bytes());
+        torrent_content.extend_from_slice(&vec![0; pieces_count * 20]);
+        torrent_content.extend_from_slice(b"ee");
+
+        let torrent = Torrent::from_bytes(&torrent_content)?;
+
+        assert_eq!(300, torrent.total_len());
+        assert_eq!(3, torrent.pieces_count());
+        assert_eq!(100, torrent.last_piece_size());
+        assert_eq!(
+            Some(&PieceInfo {
+                index: 1,
+                offset: 100,
+                length: 100
+            }),
+            torrent.pieces_info().get(1)
+        );
+        assert_eq!(
+            Some(&PieceInfo {
+                index: 2,
+                offset: 200,
+                length: 100
+            }),
+            torrent.pieces_info().last()
+        );
+        assert_eq!(
+            Some(&BlockInfo {
+                offset: 0,
+                length: 41,
+            }),
+            torrent
+                .blocks_info(0, 41)
+                .context("requested piece does not exist")?
+                .get(0)
+        );
+        assert_eq!(
+            Some(&BlockInfo {
+                offset: 82,
+                length: 18,
+            }),
+            torrent
+                .blocks_info(0, 41)
+                .context("requested piece does not exist")?
+                .get(2)
+        );
+
         Ok(())
     }
 }
