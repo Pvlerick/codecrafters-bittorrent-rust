@@ -32,6 +32,11 @@ pub enum Command {
         #[arg(default_value_t = 0)]
         start: u32,
     },
+    Download {
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        torrent: PathBuf,
+    },
 }
 
 #[cfg(test)]

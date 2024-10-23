@@ -126,7 +126,7 @@ impl<T: HttpClient> BtClient<T> {
 
     pub fn download_piece(
         &self,
-        torrent: Torrent,
+        torrent: &Torrent,
         peer: SocketAddrV4,
         index: u32,
     ) -> anyhow::Result<Vec<u8>> {
@@ -139,7 +139,7 @@ impl<T: HttpClient> BtClient<T> {
     fn piece_download<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
-        torrent: Torrent,
+        torrent: &Torrent,
         index: u32,
     ) -> anyhow::Result<Vec<u8>> {
         use crate::peer_messages::Message::*;
@@ -161,18 +161,14 @@ impl<T: HttpClient> BtClient<T> {
                 break;
             }
 
-            eprintln!("reading message from stream");
             let msg = Message::read_from(stream)?;
-            eprintln!("dong reading message from stream");
 
             match (&state, msg) {
                 (WaitingForBitField, BitField { .. }) => {
-                    eprintln!("got BitField");
                     stream.write_all(&Interested.to_bytes()?)?;
                     state = WaitingForUnchoke;
                 }
                 (WaitingForUnchoke, Unchoke) => {
-                    eprintln!("got Unchoke");
                     for block_info in torrent
                         .blocks_info(
                             index.try_into().context("u32 does not fit in usize")?,
@@ -208,7 +204,6 @@ impl<T: HttpClient> BtClient<T> {
                         block,
                     },
                 ) if piece_index == index => {
-                    eprintln!("got Piece");
                     let key = (begin, block.len() as u32);
                     let begin = begin as usize;
                     piece[begin..begin + block.len()].copy_from_slice(&block);
@@ -219,6 +214,31 @@ impl<T: HttpClient> BtClient<T> {
         }
 
         Ok(piece)
+    }
+
+    pub fn download(&self, torrent: &Torrent, peer: SocketAddrV4) -> anyhow::Result<Vec<u8>> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+        self.shake_hands(&mut tcp_stream, &torrent)
+            .context("shaking hands with peer")?;
+        self.daolnwod(torrent, &mut tcp_stream)
+    }
+
+    fn daolnwod<S: Read + Write + Debug>(
+        &self,
+        torrent: &Torrent,
+        stream: &mut S,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut file = vec![0u8; torrent.total_len()];
+        for piece_info in torrent.pieces_info() {
+            let piece = self.piece_download(
+                stream,
+                torrent,
+                piece_info.index.try_into().context("usize to u32")?,
+            )?;
+            file[piece_info.offset..piece_info.offset + piece_info.length].copy_from_slice(&piece);
+        }
+
+        Ok(file)
     }
 }
 
@@ -374,7 +394,7 @@ mod test {
                 }
 
                 let client = BtClient::with_block_size(BLOCK_SIZE as u32);
-                let res = client.piece_download(&mut mock_stream, torrent, PIECE_INDEX as u32)?;
+                let res = client.piece_download(&mut mock_stream, &torrent, PIECE_INDEX as u32)?;
 
                 assert_eq!(Message::Interested, Message::read_from(&mut mock_stream)?);
                 for _ in 0..(PIECES_SIZE / BLOCK_SIZE) {
