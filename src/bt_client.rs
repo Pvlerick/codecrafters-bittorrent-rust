@@ -217,28 +217,17 @@ impl<T: HttpClient> BtClient<T> {
     }
 
     pub fn download(&self, torrent: &Torrent, peer: SocketAddrV4) -> anyhow::Result<Vec<u8>> {
-        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-        self.shake_hands(&mut tcp_stream, &torrent)
-            .context("shaking hands with peer")?;
-        self.daolnwod(torrent, &mut tcp_stream)
-    }
-
-    fn daolnwod<S: Read + Write + Debug>(
-        &self,
-        torrent: &Torrent,
-        stream: &mut S,
-    ) -> anyhow::Result<Vec<u8>> {
         let mut file = vec![0u8; torrent.total_len()];
         for piece_info in torrent.pieces_info() {
-            eprintln!("getting piece {}", piece_info.index);
+            let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+            self.shake_hands(&mut tcp_stream, &torrent)
+                .context("shaking hands with peer")?;
             let piece = self.piece_download(
-                stream,
+                &mut tcp_stream,
                 torrent,
                 piece_info.index.try_into().context("usize to u32")?,
             )?;
-            eprintln!("got piece {}", piece_info.index);
             file[piece_info.offset..piece_info.offset + piece_info.length].copy_from_slice(&piece);
-            eprintln!("wrote piece {} to file vec", piece_info.index);
         }
 
         Ok(file)
