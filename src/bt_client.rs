@@ -151,6 +151,7 @@ impl<T: HttpClient> BtClient<T> {
             .context("no piece at this index")?;
         let mut piece = vec![0u8; piece_size.length];
         let mut collected_blocks = HashSet::new();
+        eprintln!("getting piece {}", index);
         loop {
             if collected_blocks
                 .iter()
@@ -165,10 +166,12 @@ impl<T: HttpClient> BtClient<T> {
 
             match (&state, msg) {
                 (WaitingForBitField, BitField { .. }) => {
+                    eprintln!("got BitField");
                     stream.write_all(&Interested.to_bytes()?)?;
                     state = WaitingForUnchoke;
                 }
                 (WaitingForUnchoke, Unchoke) => {
+                    eprintln!("got Unchoke");
                     for block_info in torrent
                         .blocks_info(
                             index.try_into().context("u32 does not fit in usize")?,
@@ -204,6 +207,7 @@ impl<T: HttpClient> BtClient<T> {
                         block,
                     },
                 ) if piece_index == index => {
+                    eprintln!("got Piece");
                     let key = (begin, block.len() as u32);
                     let begin = begin as usize;
                     piece[begin..begin + block.len()].copy_from_slice(&block);
