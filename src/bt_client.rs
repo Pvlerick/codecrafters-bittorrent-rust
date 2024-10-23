@@ -117,7 +117,7 @@ impl<T: HttpClient> BtClient<T> {
         );
 
         stream.write_all(&message.to_bytes())?;
-        let _ = stream.flush();
+        stream.flush()?;
         let mut buf = [0u8; 68];
         stream.read_exact(&mut buf)?;
 
@@ -151,7 +151,6 @@ impl<T: HttpClient> BtClient<T> {
             .context("no piece at this index")?;
         let mut piece = vec![0u8; piece_size.length];
         let mut collected_blocks = HashSet::new();
-        eprintln!("getting piece {}", index);
         loop {
             if collected_blocks
                 .iter()
@@ -162,7 +161,6 @@ impl<T: HttpClient> BtClient<T> {
                 break;
             }
 
-            stream.flush()?;
             eprintln!("reading message from stream");
             let msg = Message::read_from(stream)?;
             eprintln!("dong reading message from stream");
