@@ -5,6 +5,7 @@ use bittorrent_starter_rust::{
     bedecode::ItemIterator,
     bt_client::BtClient,
     cli::{Args, Command},
+    magnet_links::MagnetLink,
     torrent::Torrent,
 };
 use clap::Parser;
@@ -81,6 +82,12 @@ fn main() -> anyhow::Result<()> {
                 Some(file) => std::fs::write(file, &content)?,
                 None => stdout().write_all(&content)?,
             }
+            Ok(())
+        }
+        Command::MagnetParse { link } => {
+            let magnet_link = MagnetLink::parse(link).context("parsing magnet link")?;
+            println!("Tracker URL: {}", magnet_link.announce);
+            println!("Info Hash: {}", hex::encode(magnet_link.info_hash));
             Ok(())
         }
     }

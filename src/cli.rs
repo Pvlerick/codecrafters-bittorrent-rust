@@ -37,6 +37,10 @@ pub enum Command {
         output: Option<PathBuf>,
         torrent: PathBuf,
     },
+    #[command(name = "magnet_parse")]
+    MagnetParse {
+        link: String,
+    },
 }
 
 #[cfg(test)]
