@@ -116,10 +116,12 @@ impl<T: HttpClient> BtClient<T> {
             PEER_ID.as_bytes().try_into().context("invalid peer id")?,
         );
 
+        eprintln!("sending handshake from stream");
         stream.write_all(&message.to_bytes())?;
         let _ = stream.flush();
         let mut buf = [0u8; 68];
         stream.read_exact(&mut buf)?;
+        eprintln!("got handshake from stream");
 
         Ok(buf)
     }
