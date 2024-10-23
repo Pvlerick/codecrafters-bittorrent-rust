@@ -137,7 +137,9 @@ impl Message {
 
     pub fn read_from<T: Read>(input: &mut T) -> anyhow::Result<Message> {
         let mut mark = [0u8; 5];
+        eprintln!("before read_exact");
         input.read_exact(&mut mark).context("reading from input")?;
+        eprintln!("after read_exact");
         let len: usize = u32::from_be_bytes(mark[0..4].try_into().context("cannot fail")?)
             .try_into()
             .context("converting u32 to usize")?;
