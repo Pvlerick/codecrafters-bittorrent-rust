@@ -162,7 +162,9 @@ impl<T: HttpClient> BtClient<T> {
                 break;
             }
 
+            eprintln!("reading message from stream");
             let msg = Message::read_from(stream)?;
+            eprintln!("dong reading message from stream");
 
             match (&state, msg) {
                 (WaitingForBitField, BitField { .. }) => {
