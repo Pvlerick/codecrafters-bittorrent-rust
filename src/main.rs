@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
             let peers = client.get_peers(&torrent)?;
-            let peer = peers.get(1).expect("no peer after contacting tracker");
+            let peer = peers.first().expect("no peer after contacting tracker");
             let content = client.download_piece(torrent, *peer, start)?;
             match output {
                 Some(file) => std::fs::write(file, &content)?,
