@@ -131,8 +131,10 @@ impl<T: HttpClient> BtClient<T> {
         index: u32,
     ) -> anyhow::Result<Vec<u8>> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-        self.handshake(&torrent, peer)
+        let peer_id = self
+            .handshake(&torrent, peer)
             .context("shaking hands with peer")?;
+        eprintln!("peer id: {}", hex::encode(peer_id));
         self.piece_download(&mut tcp_stream, torrent, index)
     }
 
