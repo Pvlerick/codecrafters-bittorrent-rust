@@ -162,7 +162,7 @@ impl<T: HttpClient> BtClient<T> {
                 break;
             }
 
-            stream.write(&vec![0u8; 1])?;
+            stream.flush()?;
             eprintln!("reading message from stream");
             let msg = Message::read_from(stream)?;
             eprintln!("dong reading message from stream");
