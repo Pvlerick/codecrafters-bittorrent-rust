@@ -6,34 +6,115 @@ use std::{
 use anyhow::{anyhow, Context};
 use bytes::BufMut;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Handshake {
     pub info_hash: [u8; 20],
     pub peer_id: [u8; 20],
+    extension: Extension,
 }
 
 impl Handshake {
     pub fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Self {
-        Self { info_hash, peer_id }
+        Handshake::with_extension(info_hash, peer_id, Extension::None)
+    }
+
+    pub fn with_extension(info_hash: [u8; 20], peer_id: [u8; 20], extension: Extension) -> Self {
+        Self {
+            info_hash,
+            peer_id,
+            extension,
+        }
     }
 
     pub fn to_bytes(&self) -> [u8; 68] {
         let mut buf = Vec::new();
         buf.push(19u8);
         buf.extend_from_slice(b"BitTorrent protocol");
-        buf.put_bytes(0u8, 8);
+        buf.put(self.extension.to_bytes().as_slice());
         buf.put(&self.info_hash[..]);
         buf.put(&self.peer_id[..]);
         buf.try_into().expect("should always work")
     }
 }
 
-impl From<[u8; 68]> for Handshake {
-    fn from(value: [u8; 68]) -> Self {
-        Self::new(
+impl From<&[u8; 68]> for Handshake {
+    fn from(value: &[u8; 68]) -> Self {
+        Self::with_extension(
             value[28..48].try_into().expect("should never fail"),
             value[48..68].try_into().expect("should never fail"),
+            Extension::from(&value[20..28].try_into().expect("should never fail")),
         )
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Extension {
+    None,
+    MagnetLink,
+}
+
+impl Extension {
+    pub fn to_bytes(&self) -> [u8; 8] {
+        match self {
+            Extension::None => [0u8; 8],
+            Extension::MagnetLink => [0, 0, 0, 0, 0, 16, 0, 0],
+        }
+    }
+}
+
+//TODO Should be try_from
+impl From<&[u8; 8]> for Extension {
+    fn from(value: &[u8; 8]) -> Self {
+        match value {
+            [0, 0, 0, 0, 0, 16, 0, 0] => Extension::MagnetLink,
+            _ => Extension::None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod handshake_test {
+    use bytes::BufMut;
+
+    use crate::peer_messages::{Extension, Handshake};
+
+    const INFO_HASH: [u8; 20] = [
+        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    ];
+    const PEER_ID: [u8; 20] = [
+        40u8, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+    ];
+
+    #[test]
+    fn ser_deser_handshake_without_extension() {
+        let handshake = Handshake::new(INFO_HASH, PEER_ID);
+
+        let mut bytes = Vec::new();
+        bytes.push(19u8);
+        bytes.extend_from_slice(b"BitTorrent protocol");
+        bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        bytes.put(&INFO_HASH[..]);
+        bytes.put(&PEER_ID[..]);
+        let bytes: [u8; 68] = bytes.try_into().expect("should not fail");
+
+        assert_eq!(bytes, handshake.to_bytes());
+        assert_eq!(handshake, Handshake::from(&bytes));
+    }
+
+    #[test]
+    fn ser_deser_handshake_with_magnet_link_extension() {
+        let handshake = Handshake::with_extension(INFO_HASH, PEER_ID, Extension::MagnetLink);
+
+        let mut bytes = Vec::new();
+        bytes.push(19u8);
+        bytes.extend_from_slice(b"BitTorrent protocol");
+        bytes.extend_from_slice(&[0, 0, 0, 0, 0, 16, 0, 0]);
+        bytes.put(&INFO_HASH[..]);
+        bytes.put(&PEER_ID[..]);
+        let bytes: [u8; 68] = bytes.try_into().expect("should not fail");
+
+        assert_eq!(bytes, handshake.to_bytes());
+        assert_eq!(handshake, Handshake::from(&bytes));
     }
 }
 
@@ -168,7 +249,7 @@ impl Display for Message {
 }
 
 #[cfg(test)]
-mod test {
+mod message_test {
     use crate::peer_messages::Message;
 
     #[test]

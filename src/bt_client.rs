@@ -9,10 +9,12 @@ use anyhow::{anyhow, Context};
 use reqwest::Url;
 
 use crate::{
-    peer_messages::{Handshake, Message},
+    peer_messages::{Extension, Handshake, Message},
     torrent::Torrent,
     tracker,
 };
+
+pub const PEER_ID: &str = "alice_is_1_feet_tall";
 
 pub trait HttpClient {
     fn get(&self, url: Url) -> anyhow::Result<Vec<u8>>;
@@ -30,8 +32,6 @@ impl HttpClient for reqwest::blocking::Client {
         }
     }
 }
-
-const PEER_ID: &str = "alice_is_1_feet_tall";
 
 pub struct BtClient<T: HttpClient> {
     client: T,
@@ -64,28 +64,7 @@ impl<T: HttpClient> BtClient<T> {
         Self { client, block_size }
     }
 
-    pub fn get_peers(&self, torrent: &Torrent) -> anyhow::Result<Vec<SocketAddrV4>> {
-        let info_hash = hex::encode(torrent.info_hash()?)
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|i| format!("%{}{}", i[0], i[1]))
-            .collect::<Vec<_>>()
-            .concat();
-
-        let tracker_url = Url::parse_with_params(
-            format!("{}?info_hash={}", torrent.announce, info_hash).as_str(),
-            &[
-                ("peer_id", PEER_ID),
-                ("port", "6881"),
-                ("uploaded", "0"),
-                ("downloaded", "0"),
-                ("left", format!("{}", torrent.total_len()).as_str()),
-                ("compact", "1"),
-            ],
-        )
-        .context("creating tracker url")?;
-
+    pub fn get_peers(&self, tracker_url: Url) -> anyhow::Result<Vec<SocketAddrV4>> {
         let res = self.client.get(tracker_url)?;
 
         let res: tracker::Response =
@@ -94,26 +73,38 @@ impl<T: HttpClient> BtClient<T> {
         Ok(res.peers.0)
     }
 
-    pub fn handshake(&self, torrent: &Torrent, peer: SocketAddrV4) -> anyhow::Result<[u8; 20]> {
+    pub fn handshake(&self, info_hash: [u8; 20], peer: SocketAddrV4) -> anyhow::Result<[u8; 20]> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
-        let res = self.shake_hands(&mut tcp_stream, torrent)?;
+        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, Extension::None)?;
 
-        Ok(Handshake::from(res).peer_id)
+        Ok(Handshake::from(&res).peer_id)
+    }
+
+    pub fn handshake_with_extension(
+        &self,
+        info_hash: [u8; 20],
+        peer: SocketAddrV4,
+        extension: Extension,
+    ) -> anyhow::Result<[u8; 20]> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+
+        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, extension)?;
+
+        Ok(Handshake::from(&res).peer_id)
     }
 
     fn shake_hands<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
-        torrent: &Torrent,
+        info_hash: [u8; 20],
+        peer_id: &str,
+        extension: Extension,
     ) -> anyhow::Result<[u8; 68]> {
-        let message = Handshake::new(
-            torrent
-                .info_hash()?
-                .as_slice()
-                .try_into()
-                .context("invalid info hash length")?,
-            PEER_ID.as_bytes().try_into().context("invalid peer id")?,
+        let message = Handshake::with_extension(
+            info_hash,
+            peer_id.as_bytes().try_into().context("invalid peer id")?,
+            extension,
         );
 
         stream.write_all(&message.to_bytes())?;
@@ -131,8 +122,13 @@ impl<T: HttpClient> BtClient<T> {
         index: u32,
     ) -> anyhow::Result<Vec<u8>> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-        self.shake_hands(&mut tcp_stream, &torrent)
-            .context("shaking hands with peer")?;
+        self.shake_hands(
+            &mut tcp_stream,
+            torrent.info_hash()?,
+            PEER_ID,
+            Extension::None,
+        )
+        .context("shaking hands with peer")?;
         self.piece_download(&mut tcp_stream, torrent, index)
     }
 
@@ -220,8 +216,13 @@ impl<T: HttpClient> BtClient<T> {
         let mut file = vec![0u8; torrent.total_len()];
         for piece_info in torrent.pieces_info() {
             let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-            self.shake_hands(&mut tcp_stream, &torrent)
-                .context("shaking hands with peer")?;
+            self.shake_hands(
+                &mut tcp_stream,
+                torrent.info_hash()?,
+                PEER_ID,
+                Extension::None,
+            )
+            .context("shaking hands with peer")?;
             let piece = self.piece_download(
                 &mut tcp_stream,
                 torrent,
@@ -254,7 +255,13 @@ mod test {
     use reqwest::{Method, Url};
     use reqwest_mock::{StubClient, StubDefault, StubSettings, StubStrictness};
 
-    use crate::{bt_client::BtClient, peer_messages::Message, sha1, torrent::Torrent};
+    use crate::{
+        bt_client::{BtClient, PEER_ID},
+        magnet_links::MagnetLink,
+        peer_messages::{Extension, Message},
+        sha1,
+        torrent::Torrent,
+    };
 
     use super::HttpClient;
 
@@ -299,7 +306,7 @@ mod test {
                 "120.120.120.120:12855"
             ],
             bt_client
-                .get_peers(&torrent)?
+                .get_peers(torrent.tracker_url(PEER_ID)?)?
                 .iter()
                 .map(|i| format!("{i}"))
                 .collect::<Vec<_>>()
@@ -324,7 +331,43 @@ mod test {
         ];
         mock_stream.write_all(&response_from_peer)?;
 
-        let res = bt_client.shake_hands(&mut mock_stream, &torrent)?;
+        let res = bt_client.shake_hands(
+            &mut mock_stream,
+            torrent.info_hash()?,
+            PEER_ID,
+            Extension::None,
+        )?;
+        assert_eq!(response_from_peer, res); // What is returned is what was initialy written in
+                                             // the "stream"
+        let mut buf = [0u8; 68];
+        mock_stream.read_exact(&mut buf)?;
+        assert_eq!(b"00000000000000000000", &res[48..68]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn shake_hands_with_magnet_extension() -> anyhow::Result<()> {
+        let magnet_link = MagnetLink::parse("magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce")?;
+
+        let bt_client = BtClient::new();
+
+        let mut mock_stream = VecDeque::new();
+        // Message that will be read by the client - note the extension 6th bytes extension flag!
+        let response_from_peer = [
+            19u8, 66, 105, 116, 84, 111, 114, 114, 101, 110, 116, 32, 112, 114, 111, 116, 111, 99,
+            111, 108, 0, 0, 0, 0, 0, 16, 0, 0, 161, 138, 121, 250, 68, 224, 69, 177, 225, 56, 121,
+            22, 109, 53, 130, 62, 132, 132, 25, 248, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48,
+            48, 48, 48, 48, 48, 48, 48, 48, 48,
+        ];
+        mock_stream.write_all(&response_from_peer)?;
+
+        let res = bt_client.shake_hands(
+            &mut mock_stream,
+            magnet_link.info_hash,
+            PEER_ID,
+            Extension::MagnetLink,
+        )?;
         assert_eq!(response_from_peer, res); // What is returned is what was initialy written in
                                              // the "stream"
         let mut buf = [0u8; 68];

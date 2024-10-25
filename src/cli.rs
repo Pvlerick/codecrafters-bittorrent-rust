@@ -39,7 +39,11 @@ pub enum Command {
     },
     #[command(name = "magnet_parse")]
     MagnetParse {
-        link: String,
+        magnet_link: String,
+    },
+    #[command(name = "magnet_handshake")]
+    MagnetHandshake {
+        magnet_link: String,
     },
 }
 

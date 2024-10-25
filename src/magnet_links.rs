@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use anyhow::Context;
+use reqwest::Url;
 
 pub struct MagnetLink {
-    pub announce: String,
+    pub announce: Url,
     pub info_hash: [u8; 20],
 }
 
@@ -16,10 +17,12 @@ impl MagnetLink {
             .context("turing magnet link to hashmap")?;
 
         let hash = map.get("xt").context("getting xt key")?;
+        dbg!(&hash.as_bytes()[9..]);
         let hash = hex::decode(&hash.as_bytes()[9..])?;
 
         Ok(Self {
-            announce: map.get("tr").context("getting tr key")?.to_owned(),
+            announce: Url::parse(map.get("tr").context("getting tr key")?)
+                .context("parsing announce url")?,
             info_hash: TryInto::<[u8; 20]>::try_into(&hash[..20]).expect("hash is not 20 bytes"),
         })
     }
@@ -27,6 +30,8 @@ impl MagnetLink {
 
 #[cfg(test)]
 mod test {
+    use reqwest::Url;
+
     use crate::magnet_links::MagnetLink;
 
     #[test]
@@ -34,11 +39,11 @@ mod test {
         let res = MagnetLink::parse("magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce")?;
 
         assert_eq!(
-            "d69f91e6b2ae4c542468d1073a71d4ea13879a7f",
+            "ad42ce8109f54c99613ce38f9b4d87e70f24a165",
             hex::encode(res.info_hash)
         );
         assert_eq!(
-            "http://bittorrent-test-tracker.codecrafters.io/announce",
+            Url::parse("http://bittorrent-test-tracker.codecrafters.io/announce")?,
             res.announce
         );
 
