@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             for peer in client.get_peers(client.tracker_url(
                 &torrent.announce,
                 &torrent.info_hash()?,
-                0,
+                Some(torrent.total_len()),
             )?)? {
                 println!("{peer}");
             }
@@ -101,7 +101,7 @@ fn main() -> anyhow::Result<()> {
             let peers = client.get_peers(client.tracker_url(
                 magnet_link.announce.as_str(),
                 &magnet_link.info_hash,
-                0,
+                None,
             )?)?;
             let peer = peers.first().context("getting first peer")?;
             let peer_id = client.handshake_with_extension(

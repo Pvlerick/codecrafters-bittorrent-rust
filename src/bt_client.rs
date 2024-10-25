@@ -68,7 +68,7 @@ impl<T: HttpClient> BtClient<T> {
         &self,
         announce_url: &str,
         info_hash: &[u8; 20],
-        left: usize,
+        left: Option<usize>,
     ) -> anyhow::Result<Url> {
         let info_hash = hex::encode(info_hash)
             .chars()
@@ -85,7 +85,10 @@ impl<T: HttpClient> BtClient<T> {
                 ("port", "6881"),
                 ("uploaded", "0"),
                 ("downloaded", "0"),
-                ("left", format!("{}", left).as_str()),
+                (
+                    "left",
+                    format!("{}", left.map_or_else(|| "0".to_owned(), |i| i.to_string())).as_str(),
+                ),
                 ("compact", "1"),
             ],
         )
