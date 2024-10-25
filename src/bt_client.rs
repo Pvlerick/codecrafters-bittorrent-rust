@@ -64,6 +64,34 @@ impl<T: HttpClient> BtClient<T> {
         Self { client, block_size }
     }
 
+    pub fn tracker_url(
+        &self,
+        announce_url: &str,
+        info_hash: &[u8; 20],
+        left: usize,
+    ) -> anyhow::Result<Url> {
+        let info_hash = hex::encode(info_hash)
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|i| format!("%{}{}", i[0], i[1]))
+            .collect::<Vec<_>>()
+            .concat();
+
+        Url::parse_with_params(
+            format!("{}?info_hash={}", announce_url, info_hash).as_str(),
+            &[
+                ("peer_id", PEER_ID),
+                ("port", "6881"),
+                ("uploaded", "0"),
+                ("downloaded", "0"),
+                ("left", format!("{}", left).as_str()),
+                ("compact", "1"),
+            ],
+        )
+        .context("creating tracker url")
+    }
+
     pub fn get_peers(&self, tracker_url: Url) -> anyhow::Result<Vec<SocketAddrV4>> {
         let res = self.client.get(tracker_url)?;
 

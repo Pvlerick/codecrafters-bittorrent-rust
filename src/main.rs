@@ -39,7 +39,11 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            for peer in client.get_peers(torrent.tracker_url(PEER_ID)?)? {
+            for peer in client.get_peers(client.tracker_url(
+                &torrent.announce,
+                &torrent.info_hash()?,
+                0,
+            )?)? {
                 println!("{peer}");
             }
             Ok(())
@@ -94,7 +98,11 @@ fn main() -> anyhow::Result<()> {
         Command::MagnetHandshake { magnet_link } => {
             let magnet_link = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
             let client = BtClient::new();
-            let peers = client.get_peers(magnet_link.announce)?;
+            let peers = client.get_peers(client.tracker_url(
+                magnet_link.announce.as_str(),
+                &magnet_link.info_hash,
+                0,
+            )?)?;
             let peer = peers.first().context("getting first peer")?;
             let peer_id = client.handshake_with_extension(
                 magnet_link.info_hash,

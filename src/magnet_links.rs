@@ -17,7 +17,6 @@ impl MagnetLink {
             .context("turing magnet link to hashmap")?;
 
         let hash = map.get("xt").context("getting xt key")?;
-        dbg!(&hash.as_bytes()[9..]);
         let hash = hex::decode(&hash.as_bytes()[9..])?;
 
         Ok(Self {
