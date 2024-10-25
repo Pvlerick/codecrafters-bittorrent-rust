@@ -87,7 +87,11 @@ impl<T: HttpClient> BtClient<T> {
                 ("downloaded", "0"),
                 (
                     "left",
-                    format!("{}", left.map_or_else(|| "0".to_owned(), |i| i.to_string())).as_str(),
+                    format!(
+                        "{}",
+                        left.map_or_else(|| "999".to_owned(), |i| i.to_string())
+                    )
+                    .as_str(),
                 ),
                 ("compact", "1"),
             ],
