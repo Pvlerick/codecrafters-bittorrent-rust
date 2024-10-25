@@ -3,7 +3,7 @@ use std::io::{stdout, Write};
 use anyhow::Context;
 use bittorrent_starter_rust::{
     bedecode::ItemIterator,
-    bt_client::{BtClient, PEER_ID},
+    bt_client::BtClient,
     cli::{Args, Command},
     magnet_links::MagnetLink,
     peer_messages::Extension,
@@ -39,11 +39,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            for peer in client.get_peers(client.tracker_url(
-                &torrent.announce,
-                &torrent.info_hash()?,
-                Some(torrent.total_len()),
-            )?)? {
+            for peer in client.get_peers(&torrent)? {
                 println!("{peer}");
             }
             Ok(())
@@ -66,7 +62,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            let peers = client.get_peers(torrent.tracker_url(PEER_ID)?)?;
+            let peers = client.get_peers(&torrent)?;
             let peer = peers.first().expect("no peer after contacting tracker");
             let content = client.download_piece(&torrent, *peer, start)?;
             match output {
@@ -80,7 +76,7 @@ fn main() -> anyhow::Result<()> {
             let torrent: Torrent =
                 serde_bencode::from_bytes(&torrent).context("parse torrent file")?;
             let client = BtClient::new();
-            let peers = client.get_peers(torrent.tracker_url(PEER_ID)?)?;
+            let peers = client.get_peers(&torrent)?;
             let peer = peers.first().context("getting first peer")?;
             let content = client.download(&torrent, *peer)?;
             match output {
@@ -98,11 +94,7 @@ fn main() -> anyhow::Result<()> {
         Command::MagnetHandshake { magnet_link } => {
             let magnet_link = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
             let client = BtClient::new();
-            let peers = client.get_peers(client.tracker_url(
-                magnet_link.announce.as_str(),
-                &magnet_link.info_hash,
-                None,
-            )?)?;
+            let peers = client.get_peers(&magnet_link)?;
             let peer = peers.first().context("getting first peer")?;
             let peer_id = client.handshake_with_extension(
                 magnet_link.info_hash,

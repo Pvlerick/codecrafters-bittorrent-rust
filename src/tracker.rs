@@ -6,7 +6,7 @@ use serde::{de::Visitor, Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize)]
 pub struct Response {
-    pub interval: usize,
+    pub interval: Option<usize>,
     pub peers: Peers,
 }
 

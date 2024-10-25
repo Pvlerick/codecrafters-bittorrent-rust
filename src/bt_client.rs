@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context};
 use reqwest::Url;
 
 use crate::{
+    magnet_links::MagnetLink,
     peer_messages::{Extension, Handshake, Message},
     torrent::Torrent,
     tracker,
@@ -64,43 +65,8 @@ impl<T: HttpClient> BtClient<T> {
         Self { client, block_size }
     }
 
-    pub fn tracker_url(
-        &self,
-        announce_url: &str,
-        info_hash: &[u8; 20],
-        left: Option<usize>,
-    ) -> anyhow::Result<Url> {
-        let info_hash = hex::encode(info_hash)
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|i| format!("%{}{}", i[0], i[1]))
-            .collect::<Vec<_>>()
-            .concat();
-
-        Url::parse_with_params(
-            format!("{}?info_hash={}", announce_url, info_hash).as_str(),
-            &[
-                ("peer_id", PEER_ID),
-                ("port", "6881"),
-                ("uploaded", "0"),
-                ("downloaded", "0"),
-                (
-                    "left",
-                    format!(
-                        "{}",
-                        left.map_or_else(|| "999".to_owned(), |i| i.to_string())
-                    )
-                    .as_str(),
-                ),
-                ("compact", "1"),
-            ],
-        )
-        .context("creating tracker url")
-    }
-
-    pub fn get_peers(&self, tracker_url: Url) -> anyhow::Result<Vec<SocketAddrV4>> {
-        let res = self.client.get(tracker_url)?;
+    pub fn get_peers<I: TrackerInfo>(&self, tracker_info: &I) -> anyhow::Result<Vec<SocketAddrV4>> {
+        let res = self.client.get(tracker_info.tracker_url()?)?;
 
         let res: tracker::Response =
             serde_bencode::from_bytes(&res).context("parse tracker get response")?;
@@ -278,6 +244,45 @@ mod state {
     }
 }
 
+pub trait TrackerInfo {
+    fn tracker_url(&self) -> anyhow::Result<Url>;
+}
+
+impl TrackerInfo for Torrent {
+    fn tracker_url(&self) -> anyhow::Result<Url> {
+        tracker_url(&self.announce, &self.info_hash()?, self.total_len())
+    }
+}
+
+impl TrackerInfo for MagnetLink {
+    fn tracker_url(&self) -> anyhow::Result<Url> {
+        tracker_url(&self.announce.to_string(), &self.info_hash, 999)
+    }
+}
+
+fn tracker_url(announce_url: &str, info_hash: &[u8; 20], left: usize) -> anyhow::Result<Url> {
+    let info_hash = hex::encode(info_hash)
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(2)
+        .map(|i| format!("%{}{}", i[0], i[1]))
+        .collect::<Vec<_>>()
+        .concat();
+
+    Url::parse_with_params(
+        format!("{}?info_hash={}", announce_url, info_hash).as_str(),
+        &[
+            ("peer_id", PEER_ID),
+            ("port", "6881"),
+            ("uploaded", "0"),
+            ("downloaded", "0"),
+            ("left", format!("{}", left.to_string()).as_str()),
+            ("compact", "1"),
+        ],
+    )
+    .context("creating tracker url")
+}
+
 #[cfg(test)]
 mod test {
     use std::{
@@ -341,7 +346,7 @@ mod test {
                 "120.120.120.120:12855"
             ],
             bt_client
-                .get_peers(torrent.tracker_url(PEER_ID)?)?
+                .get_peers(&torrent)?
                 .iter()
                 .map(|i| format!("{i}"))
                 .collect::<Vec<_>>()

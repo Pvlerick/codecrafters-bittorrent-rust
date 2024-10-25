@@ -1,6 +1,5 @@
 use anyhow::Context;
 use base64::{engine::general_purpose, Engine};
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::{hashes::Hashes, sha1};
@@ -15,29 +14,6 @@ impl Torrent {
     pub fn info_hash(&self) -> anyhow::Result<[u8; 20]> {
         let bytes = serde_bencode::to_bytes(&self.info)?;
         Ok(sha1::hash(&bytes))
-    }
-
-    pub fn tracker_url(&self, peer_id: &str) -> anyhow::Result<Url> {
-        let info_hash = hex::encode(self.info_hash()?)
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|i| format!("%{}{}", i[0], i[1]))
-            .collect::<Vec<_>>()
-            .concat();
-
-        Url::parse_with_params(
-            format!("{}?info_hash={}", self.announce, info_hash).as_str(),
-            &[
-                ("peer_id", peer_id),
-                ("port", "6881"),
-                ("uploaded", "0"),
-                ("downloaded", "0"),
-                ("left", format!("{}", self.total_len()).as_str()),
-                ("compact", "1"),
-            ],
-        )
-        .context("creating tracker url")
     }
 
     pub fn total_len(&self) -> usize {
