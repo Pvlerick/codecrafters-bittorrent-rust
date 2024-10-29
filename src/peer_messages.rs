@@ -269,7 +269,7 @@ impl Message {
                         },
                     })
                 }
-                _ => todo!(),
+                id => Err(anyhow!("unrecognized extension message id: {id}")),
             },
             id => Err(anyhow!(
                 "unrecognized message id: {id} or invalid message length"
