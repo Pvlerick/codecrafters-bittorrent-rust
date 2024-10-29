@@ -106,5 +106,14 @@ fn main() -> anyhow::Result<()> {
             println!("Peer Metadata Extension ID: {}", response.1);
             Ok(())
         }
+        Command::MagnetInfo { magnet_link } => {
+            let magnet_link = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
+            let client = BtClient::new();
+            let peers = client.get_peers(&magnet_link)?;
+            let peer = peers.first().context("getting first peer")?;
+            let _ = client.get_magnet_info(magnet_link.info_hash, *peer, Extension::MagnetLink)?;
+
+            Ok(())
+        }
     }
 }

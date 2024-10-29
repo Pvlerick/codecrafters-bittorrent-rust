@@ -138,8 +138,14 @@ pub enum Message {
         block: Vec<u8>,
     },
     Extension {
-        extensions_info: ExtensionsInfo,
+        message: ExtensionMessage,
     },
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ExtensionMessage {
+    Info { info: ExtensionsInfo },
+    Data { data: ExtensionsData },
 }
 
 impl Message {
@@ -186,12 +192,25 @@ impl Message {
                 Ok(buf)
             }
             // extension: <len=0001+X><id=20><extensions_stuff>
-            Message::Extension { extensions_info } => {
-                let payload = serde_bencode::to_bytes(extensions_info)?;
+            Message::Extension {
+                message: ExtensionMessage::Info { info },
+            } => {
+                let payload = serde_bencode::to_bytes(info)?;
                 let mut buf = Vec::new();
                 buf.extend_from_slice(&Message::usize_to_u32_be_bytes(payload.len() + 2)?);
                 buf.push(20); // message id
                 buf.push(0); // extension handshake id
+                buf.extend_from_slice(&payload);
+                Ok(buf)
+            }
+            Message::Extension {
+                message: ExtensionMessage::Data { data },
+            } => {
+                let payload = serde_bencode::to_bytes(data)?;
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&Message::usize_to_u32_be_bytes(payload.len() + 2)?);
+                buf.push(20); // message id
+                buf.push(1); // extension handshake id
                 buf.extend_from_slice(&payload);
                 Ok(buf)
             }
@@ -224,9 +243,14 @@ impl Message {
                 begin: u32::from_be_bytes(input[9..13].try_into().expect("cannot fail")),
                 block: input[13..].to_vec(),
             }),
-            20 => Ok(Message::Extension {
-                extensions_info: serde_bencode::from_bytes(&input[6..])?,
-            }),
+            20 => match input[5] {
+                0 => Ok(Message::Extension {
+                    message: ExtensionMessage::Info {
+                        info: serde_bencode::from_bytes(&input[6..])?,
+                    },
+                }),
+                _ => todo!(),
+            },
             id => Err(anyhow!(
                 "unrecognized message id: {id} or invalid message length"
             )),
@@ -291,11 +315,22 @@ impl ExtensionsInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ExtensionsData {
+    pub msg_type: u32,
+    pub piece: u32,
+}
+
+impl ExtensionsData {
+    pub fn new(msg_type: u32, piece: u32) -> Self {
+        ExtensionsData { msg_type, piece }
+    }
+}
 #[cfg(test)]
 mod message_test {
     use bytes::BufMut;
 
-    use crate::peer_messages::{ExtensionsInfo, Message};
+    use crate::peer_messages::{ExtensionMessage, ExtensionsInfo, Message};
 
     #[test]
     fn ser_deser_message_bitfield() -> anyhow::Result<()> {
@@ -404,7 +439,11 @@ mod message_test {
     #[test]
     fn ser_deser_message_extension() -> anyhow::Result<()> {
         let extensions_info = ExtensionsInfo::new(16);
-        let msg = Message::Extension { extensions_info };
+        let msg = Message::Extension {
+            message: ExtensionMessage::Info {
+                info: extensions_info,
+            },
+        };
 
         let payload = b"d1:md11:ut_metadatai16eee";
         let mut bytes = vec![0, 0, 0];

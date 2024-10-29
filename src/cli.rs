@@ -45,6 +45,10 @@ pub enum Command {
     MagnetHandshake {
         magnet_link: String,
     },
+    #[command(name = "magnet_info")]
+    MagnetInfo {
+        magnet_link: String,
+    },
 }
 
 #[cfg(test)]

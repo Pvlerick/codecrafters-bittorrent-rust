@@ -10,7 +10,9 @@ use reqwest::Url;
 
 use crate::{
     magnet_links::MagnetLink,
-    peer_messages::{Extension, ExtensionsInfo, Handshake, Message},
+    peer_messages::{
+        Extension, ExtensionMessage, ExtensionsData, ExtensionsInfo, Handshake, Message,
+    },
     torrent::Torrent,
     tracker,
 };
@@ -111,7 +113,9 @@ impl<T: HttpClient> BtClient<T> {
         tcp_stream
             .write_all(
                 &Message::Extension {
-                    extensions_info: ExtensionsInfo::new(16),
+                    message: ExtensionMessage::Info {
+                        info: ExtensionsInfo::new(16),
+                    },
                 }
                 .to_bytes()?,
             )
@@ -119,12 +123,63 @@ impl<T: HttpClient> BtClient<T> {
 
         msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
         match msg {
-            Message::Extension { extensions_info } => Ok((
+            Message::Extension {
+                message: ExtensionMessage::Info { info },
+            } => Ok((
                 Handshake::from(&res).peer_id,
-                extensions_info.metdata.ut_metadata.unwrap(),
+                info.metdata.ut_metadata.unwrap(),
             )),
             _ => Err(anyhow!("unexpected message received")),
         }
+    }
+
+    pub fn get_magnet_info(
+        &self,
+        info_hash: [u8; 20],
+        peer: SocketAddrV4,
+        extension: Extension,
+    ) -> anyhow::Result<()> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+
+        let _ = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
+
+        let mut msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        assert!(matches!(msg, Message::BitField { .. }));
+
+        tcp_stream
+            .write_all(
+                &Message::Extension {
+                    message: ExtensionMessage::Info {
+                        info: ExtensionsInfo::new(16),
+                    },
+                }
+                .to_bytes()?,
+            )
+            .context("writing extension message to stream")?;
+
+        msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        match msg {
+            Message::Extension {
+                message: ExtensionMessage::Info { .. },
+            } => {}
+            _ => return Err(anyhow!("unexpected message received")),
+        }
+
+        tcp_stream
+            .write_all(
+                &Message::Extension {
+                    message: ExtensionMessage::Data {
+                        data: ExtensionsData {
+                            msg_type: 0,
+                            piece: 0,
+                        },
+                    },
+                }
+                .to_bytes()?,
+            )
+            .context("writing extension message to stream")?;
+
+        Ok(())
     }
 
     fn shake_hands<S: Read + Write + Debug>(
@@ -219,7 +274,9 @@ impl<T: HttpClient> BtClient<T> {
                         stream
                             .write_all(
                                 &Message::Extension {
-                                    extensions_info: ExtensionsInfo::new(16),
+                                    message: ExtensionMessage::Info {
+                                        info: ExtensionsInfo::new(16),
+                                    },
                                 }
                                 .to_bytes()?,
                             )
@@ -370,7 +427,7 @@ mod test {
     use crate::{
         bt_client::{BtClient, PEER_ID},
         magnet_links::MagnetLink,
-        peer_messages::{Extension, ExtensionsInfo, Message},
+        peer_messages::{Extension, ExtensionMessage, ExtensionsInfo, Message},
         sha1,
         torrent::Torrent,
     };
@@ -524,7 +581,7 @@ mod test {
                 mock_stream.write_all(&Message::BitField { payload: vec![] }.to_bytes()?)?;
 
                 if $extension.is_some() {
-                    mock_stream.write_all(&Message::Extension{ extensions_info: ExtensionsInfo::new(16) }.to_bytes()?)?;
+                    mock_stream.write_all(&Message::Extension{ message: ExtensionMessage::Info { info: ExtensionsInfo::new(16) } }.to_bytes()?)?;
                 }
 
                 mock_stream.write_all(&Message::Unchoke.to_bytes()?)?;
