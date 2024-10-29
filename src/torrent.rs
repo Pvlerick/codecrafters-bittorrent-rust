@@ -17,10 +17,7 @@ impl Torrent {
     }
 
     pub fn total_len(&self) -> usize {
-        match &self.info.keys {
-            Keys::SingleFile { length } => *length,
-            Keys::MultiFile { files } => files.iter().map(|i| i.length).sum(),
-        }
+        self.info.total_len()
     }
 
     fn piece_length(&self) -> usize {
@@ -106,7 +103,7 @@ pub struct BlockInfo {
     pub length: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Info {
     pub name: String,
     #[serde(rename = "piece length")]
@@ -114,6 +111,19 @@ pub struct Info {
     pub pieces: Hashes,
     #[serde(flatten)]
     pub keys: Keys,
+}
+
+impl Info {
+    pub fn total_len(&self) -> usize {
+        match &self.keys {
+            Keys::SingleFile { length } => *length,
+            Keys::MultiFile { files } => files.iter().map(|i| i.length).sum(),
+        }
+    }
+
+    pub fn pieces_count(&self) -> usize {
+        self.pieces.0.len()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

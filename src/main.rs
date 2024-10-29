@@ -7,7 +7,7 @@ use bittorrent_starter_rust::{
     cli::{Args, Command},
     magnet_links::MagnetLink,
     peer_messages::Extension,
-    torrent::Torrent,
+    torrent::{Info, Torrent},
 };
 use clap::Parser;
 
@@ -111,7 +111,17 @@ fn main() -> anyhow::Result<()> {
             let client = BtClient::new();
             let peers = client.get_peers(&magnet_link)?;
             let peer = peers.first().context("getting first peer")?;
-            let _ = client.get_magnet_info(magnet_link.info_hash, *peer, Extension::MagnetLink)?;
+            let info: Info =
+                client.get_magnet_info(magnet_link.info_hash, *peer, Extension::MagnetLink)?;
+
+            println!("Tracker URL: {}", magnet_link.announce);
+            println!("Length: {}", info.total_len());
+            println!("Info Hash: {}", hex::encode(magnet_link.info_hash));
+            println!("Piece Length: {}", info.piece_length);
+            println!("Piece Hashes:");
+            for hash in info.pieces.0 {
+                println!("{}", hex::encode(hash));
+            }
 
             Ok(())
         }

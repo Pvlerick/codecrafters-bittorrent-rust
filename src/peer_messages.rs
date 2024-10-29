@@ -7,6 +7,8 @@ use anyhow::{anyhow, Context};
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 
+use crate::torrent::Info;
+
 #[derive(Debug, PartialEq)]
 pub struct Handshake {
     pub info_hash: [u8; 20],
@@ -144,8 +146,13 @@ pub enum Message {
 
 #[derive(Debug, PartialEq)]
 pub enum ExtensionMessage {
-    Info { info: ExtensionsInfo },
-    Data { data: ExtensionsData },
+    Info {
+        info: ExtensionsInfo,
+    },
+    Data {
+        data: ExtensionsData,
+        info: Option<Info>,
+    },
 }
 
 impl Message {
@@ -204,7 +211,7 @@ impl Message {
                 Ok(buf)
             }
             Message::Extension {
-                message: ExtensionMessage::Data { data },
+                message: ExtensionMessage::Data { data, .. },
             } => {
                 let payload = serde_bencode::to_bytes(data)?;
                 let mut buf = Vec::new();
@@ -319,11 +326,16 @@ impl ExtensionsInfo {
 pub struct ExtensionsData {
     pub msg_type: u32,
     pub piece: u32,
+    pub total_size: u32,
 }
 
 impl ExtensionsData {
-    pub fn new(msg_type: u32, piece: u32) -> Self {
-        ExtensionsData { msg_type, piece }
+    pub fn new(msg_type: u32, piece: u32, total_size: u32) -> Self {
+        ExtensionsData {
+            msg_type,
+            piece,
+            total_size,
+        }
     }
 }
 #[cfg(test)]

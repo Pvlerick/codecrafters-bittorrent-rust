@@ -13,7 +13,7 @@ use crate::{
     peer_messages::{
         Extension, ExtensionMessage, ExtensionsData, ExtensionsInfo, Handshake, Message,
     },
-    torrent::Torrent,
+    torrent::{Info, Torrent},
     tracker,
 };
 
@@ -138,7 +138,7 @@ impl<T: HttpClient> BtClient<T> {
         info_hash: [u8; 20],
         peer: SocketAddrV4,
         extension: Extension,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Info> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
         let _ = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
@@ -172,14 +172,22 @@ impl<T: HttpClient> BtClient<T> {
                         data: ExtensionsData {
                             msg_type: 0,
                             piece: 0,
+                            total_size: 0,
                         },
+                        info: None,
                     },
                 }
                 .to_bytes()?,
             )
             .context("writing extension message to stream")?;
 
-        Ok(())
+        msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        match msg {
+            Message::Extension {
+                message: ExtensionMessage::Data { info, .. },
+            } => Ok(info.unwrap()),
+            _ => return Err(anyhow!("unexpected message received")),
+        }
     }
 
     fn shake_hands<S: Read + Write + Debug>(
