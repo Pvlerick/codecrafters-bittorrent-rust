@@ -257,7 +257,7 @@ impl Message {
                     },
                 }),
                 _ => {
-                    let end_data = input.iter().position(|i| *i == 101).unwrap();
+                    let end_data = &input[7..].iter().position(|i| *i == 100).unwrap() + 7; // find 'd'
                     dbg!(String::from_utf8(input[6..=end_data].to_vec())?);
                     let data: ExtensionsData = serde_bencode::from_bytes(&input[6..=end_data])
                         .context("deserializing data dict")?;
