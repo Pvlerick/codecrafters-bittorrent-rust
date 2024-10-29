@@ -256,6 +256,19 @@ impl Message {
                         info: serde_bencode::from_bytes(&input[6..])?,
                     },
                 }),
+                1 => {
+                    let end_data = input.iter().position(|i| *i == 101).unwrap();
+                    let data: ExtensionsData = serde_bencode::from_bytes(&input[6..=end_data])
+                        .context("deserializing data dict")?;
+                    let info: Info = serde_bencode::from_bytes(&input[end_data + 1..])
+                        .context("deserializing info dict")?;
+                    Ok(Message::Extension {
+                        message: ExtensionMessage::Data {
+                            data,
+                            info: Some(info),
+                        },
+                    })
+                }
                 _ => todo!(),
             },
             id => Err(anyhow!(
