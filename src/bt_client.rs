@@ -158,12 +158,12 @@ impl<T: HttpClient> BtClient<T> {
             .context("writing extension message to stream")?;
 
         msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
-        match msg {
+        let extension_msg_id = match msg {
             Message::Extension {
-                message: ExtensionMessage::Info { .. },
-            } => {}
+                message: ExtensionMessage::Info { info },
+            } => info.metdata.ut_metadata.unwrap(),
             _ => return Err(anyhow!("unexpected message received")),
-        }
+        };
 
         tcp_stream
             .write_all(

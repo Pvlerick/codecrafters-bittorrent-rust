@@ -256,7 +256,7 @@ impl Message {
                         info: serde_bencode::from_bytes(&input[6..])?,
                     },
                 }),
-                1 => {
+                _ => {
                     let end_data = input.iter().position(|i| *i == 101).unwrap();
                     let data: ExtensionsData = serde_bencode::from_bytes(&input[6..=end_data])
                         .context("deserializing data dict")?;
@@ -268,8 +268,7 @@ impl Message {
                             info: Some(info),
                         },
                     })
-                }
-                id => Err(anyhow!("unrecognized extension message id: {id}")),
+                } // id => Err(anyhow!("unrecognized extension message id: {id}")),
             },
             id => Err(anyhow!(
                 "unrecognized message id: {id} or invalid message length"
