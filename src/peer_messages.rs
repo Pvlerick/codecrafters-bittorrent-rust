@@ -242,14 +242,11 @@ impl Message {
         match mark[4] {
             0..=2 => Message::from_bytes(&mark),
             5..=7 | 20 => {
-                dbg!(len);
                 let mut message = vec![0u8; 4 + len];
                 message[..5].copy_from_slice(&mark);
-                dbg!(&message);
                 input
                     .read_exact(&mut message[5..len + 4])
                     .context("reading exact number of bytes from the reader")?;
-                dbg!(&message);
                 Message::from_bytes(&message)
             }
             id => Err(anyhow!("unrecognized message id: {id}")),

@@ -105,10 +105,6 @@ impl<T: HttpClient> BtClient<T> {
 
         let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
 
-        tcp_stream
-            .write_all(&Message::BitField { payload: vec![] }.to_bytes()?)
-            .context("writing bitfield to stream")?;
-
         let msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
         assert!(matches!(msg, Message::BitField { .. }));
 
@@ -213,7 +209,6 @@ impl<T: HttpClient> BtClient<T> {
                         state = WaitingForUnchoke;
                     }
                     Extension::MagnetLink => {
-                        dbg!("writing extensions hdsh...");
                         stream
                             .write_all(
                                 &Message::Extension {
