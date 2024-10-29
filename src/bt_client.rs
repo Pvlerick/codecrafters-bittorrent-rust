@@ -100,12 +100,12 @@ impl<T: HttpClient> BtClient<T> {
         info_hash: [u8; 20],
         peer: SocketAddrV4,
         extension: Extension,
-    ) -> anyhow::Result<[u8; 20]> {
+    ) -> anyhow::Result<([u8; 20], u8)> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
         let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
 
-        let msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        let mut msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
         assert!(matches!(msg, Message::BitField { .. }));
 
         tcp_stream
@@ -117,7 +117,14 @@ impl<T: HttpClient> BtClient<T> {
             )
             .context("writing extension message to stream")?;
 
-        Ok(Handshake::from(&res).peer_id)
+        msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        match msg {
+            Message::Extension { extensions_info } => Ok((
+                Handshake::from(&res).peer_id,
+                extensions_info.metdata.ut_metadata.unwrap(),
+            )),
+            _ => Err(anyhow!("unexpected message received")),
+        }
     }
 
     fn shake_hands<S: Read + Write + Debug>(

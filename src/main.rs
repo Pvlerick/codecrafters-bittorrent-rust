@@ -96,13 +96,14 @@ fn main() -> anyhow::Result<()> {
             let client = BtClient::new();
             let peers = client.get_peers(&magnet_link)?;
             let peer = peers.first().context("getting first peer")?;
-            let peer_id = client.handshake_with_magnet_extension_for_codecrafters(
+            let response = client.handshake_with_magnet_extension_for_codecrafters(
                 magnet_link.info_hash,
                 *peer,
                 Extension::MagnetLink,
             )?;
 
-            println!("Peer ID: {}", hex::encode(peer_id));
+            println!("Peer ID: {}", hex::encode(response.0));
+            println!("Peer Metadata Extension ID: {}", response.1);
             Ok(())
         }
     }
