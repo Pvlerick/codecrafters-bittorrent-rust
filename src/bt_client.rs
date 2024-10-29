@@ -95,6 +95,35 @@ impl<T: HttpClient> BtClient<T> {
         Ok(Handshake::from(&res).peer_id)
     }
 
+    pub fn handshake_with_magnet_extension_for_codecrafters(
+        &self,
+        info_hash: [u8; 20],
+        peer: SocketAddrV4,
+        extension: Extension,
+    ) -> anyhow::Result<[u8; 20]> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+
+        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
+
+        tcp_stream
+            .write_all(&Message::BitField { payload: vec![] }.to_bytes()?)
+            .context("writing bitfield to stream")?;
+
+        let msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
+        assert!(matches!(msg, Message::BitField { .. }));
+
+        tcp_stream
+            .write_all(
+                &Message::Extension {
+                    extensions_info: ExtensionsInfo::new(16),
+                }
+                .to_bytes()?,
+            )
+            .context("writing extension message to stream")?;
+
+        Ok(Handshake::from(&res).peer_id)
+    }
+
     fn shake_hands<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
@@ -174,7 +203,6 @@ impl<T: HttpClient> BtClient<T> {
             }
 
             let msg = Message::read_from(stream).context("reading message from stream")?;
-            dbg!(&msg);
 
             match (&state, msg) {
                 (WaitingForBitField, Message::BitField { .. }) => match extension {

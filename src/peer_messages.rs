@@ -198,7 +198,7 @@ impl Message {
         }
     }
 
-    fn usize_to_u32_be_bytes(input: usize) -> anyhow::Result<[u8; 4]> {
+    pub fn usize_to_u32_be_bytes(input: usize) -> anyhow::Result<[u8; 4]> {
         Ok(u32::to_be_bytes(input.try_into()?))
     }
 
