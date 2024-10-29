@@ -10,7 +10,7 @@ use reqwest::Url;
 
 use crate::{
     magnet_links::MagnetLink,
-    peer_messages::{Extension, Handshake, Message},
+    peer_messages::{Extension, ExtensionsInfo, Handshake, Message},
     torrent::Torrent,
     tracker,
 };
@@ -77,7 +77,7 @@ impl<T: HttpClient> BtClient<T> {
     pub fn handshake(&self, info_hash: [u8; 20], peer: SocketAddrV4) -> anyhow::Result<[u8; 20]> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
-        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, Extension::None)?;
+        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &Extension::None)?;
 
         Ok(Handshake::from(&res).peer_id)
     }
@@ -90,7 +90,7 @@ impl<T: HttpClient> BtClient<T> {
     ) -> anyhow::Result<[u8; 20]> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
 
-        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, extension)?;
+        let res = self.shake_hands(&mut tcp_stream, info_hash, PEER_ID, &extension)?;
 
         Ok(Handshake::from(&res).peer_id)
     }
@@ -100,12 +100,12 @@ impl<T: HttpClient> BtClient<T> {
         stream: &mut S,
         info_hash: [u8; 20],
         peer_id: &str,
-        extension: Extension,
+        extension: &Extension,
     ) -> anyhow::Result<[u8; 68]> {
         let message = Handshake::with_extension(
             info_hash,
             peer_id.as_bytes().try_into().context("invalid peer id")?,
-            extension,
+            extension.clone(),
         );
 
         stream.write_all(&message.to_bytes())?;
@@ -127,19 +127,34 @@ impl<T: HttpClient> BtClient<T> {
             &mut tcp_stream,
             torrent.info_hash()?,
             PEER_ID,
-            Extension::None,
+            &Extension::None,
         )
         .context("shaking hands with peer")?;
-        self.piece_download(&mut tcp_stream, torrent, index)
+        self.piece_download_with_extension(&mut tcp_stream, torrent, index, &Extension::None)
     }
 
-    fn piece_download<S: Read + Write + Debug>(
+    pub fn download_piece_with_extension(
+        &self,
+        torrent: &Torrent,
+        peer: SocketAddrV4,
+        extension: &Extension,
+        index: u32,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
+
+        self.shake_hands(&mut tcp_stream, torrent.info_hash()?, PEER_ID, extension)
+            .context("shaking hands with peer")?;
+
+        self.piece_download_with_extension(&mut tcp_stream, torrent, index, extension)
+    }
+
+    fn piece_download_with_extension<S: Read + Write + Debug>(
         &self,
         stream: &mut S,
         torrent: &Torrent,
         index: u32,
+        extension: &Extension,
     ) -> anyhow::Result<Vec<u8>> {
-        use crate::peer_messages::Message::*;
         use state::State::*;
         let mut state = WaitingForBitField;
         let piece_size = torrent.pieces_info();
@@ -158,14 +173,37 @@ impl<T: HttpClient> BtClient<T> {
                 break;
             }
 
-            let msg = Message::read_from(stream)?;
+            let msg = Message::read_from(stream).context("reading message from stream")?;
+            dbg!(&msg);
 
             match (&state, msg) {
-                (WaitingForBitField, BitField { .. }) => {
-                    stream.write_all(&Interested.to_bytes()?)?;
+                (WaitingForBitField, Message::BitField { .. }) => match extension {
+                    Extension::None => {
+                        stream
+                            .write_all(&Message::Interested.to_bytes()?)
+                            .context("writing interested message to stream")?;
+                        state = WaitingForUnchoke;
+                    }
+                    Extension::MagnetLink => {
+                        dbg!("writing extensions hdsh...");
+                        stream
+                            .write_all(
+                                &Message::Extension {
+                                    extensions_info: ExtensionsInfo::new(16),
+                                }
+                                .to_bytes()?,
+                            )
+                            .context("writing extension message to stream")?;
+                        state = WaitingForExtensionHandshake;
+                    }
+                },
+                (WaitingForExtensionHandshake, Message::Extension { .. }) => {
+                    stream
+                        .write_all(&Message::Interested.to_bytes()?)
+                        .context("writing interested message to stream")?;
                     state = WaitingForUnchoke;
                 }
-                (WaitingForUnchoke, Unchoke) => {
+                (WaitingForUnchoke, Message::Unchoke) => {
                     for block_info in torrent
                         .blocks_info(
                             index.try_into().context("u32 does not fit in usize")?,
@@ -175,27 +213,29 @@ impl<T: HttpClient> BtClient<T> {
                         )
                         .context("no piece at this index")?
                     {
-                        stream.write_all(
-                            &Request {
-                                index,
-                                begin: block_info
-                                    .offset
-                                    .try_into()
-                                    .context("usize does not fit in u32")?,
-                                length: block_info
-                                    .length
-                                    .try_into()
-                                    .context("usize does not fit in u32")?,
-                            }
-                            .to_bytes()?,
-                        )?;
+                        stream
+                            .write_all(
+                                &Message::Request {
+                                    index,
+                                    begin: block_info
+                                        .offset
+                                        .try_into()
+                                        .context("usize does not fit in u32")?,
+                                    length: block_info
+                                        .length
+                                        .try_into()
+                                        .context("usize does not fit in u32")?,
+                                }
+                                .to_bytes()?,
+                            )
+                            .context("writing request message to stream")?;
                     }
 
                     state = WaitingForPieceBlock;
                 }
                 (
                     WaitingForPieceBlock,
-                    Piece {
+                    Message::Piece {
                         index: piece_index,
                         begin,
                         block,
@@ -221,13 +261,14 @@ impl<T: HttpClient> BtClient<T> {
                 &mut tcp_stream,
                 torrent.info_hash()?,
                 PEER_ID,
-                Extension::None,
+                &Extension::None,
             )
             .context("shaking hands with peer")?;
-            let piece = self.piece_download(
+            let piece = self.piece_download_with_extension(
                 &mut tcp_stream,
                 torrent,
                 piece_info.index.try_into().context("usize to u32")?,
+                &Extension::None,
             )?;
             file[piece_info.offset..piece_info.offset + piece_info.length].copy_from_slice(&piece);
         }
@@ -239,6 +280,7 @@ impl<T: HttpClient> BtClient<T> {
 mod state {
     pub enum State {
         WaitingForBitField,
+        WaitingForExtensionHandshake,
         WaitingForUnchoke,
         WaitingForPieceBlock,
     }
@@ -298,7 +340,7 @@ mod test {
     use crate::{
         bt_client::{BtClient, PEER_ID},
         magnet_links::MagnetLink,
-        peer_messages::{Extension, Message},
+        peer_messages::{Extension, ExtensionsInfo, Message},
         sha1,
         torrent::Torrent,
     };
@@ -375,7 +417,7 @@ mod test {
             &mut mock_stream,
             torrent.info_hash()?,
             PEER_ID,
-            Extension::None,
+            &Extension::None,
         )?;
         assert_eq!(response_from_peer, res); // What is returned is what was initialy written in
                                              // the "stream"
@@ -400,13 +442,15 @@ mod test {
             22, 109, 53, 130, 62, 132, 132, 25, 248, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48,
             48, 48, 48, 48, 48, 48, 48, 48, 48,
         ];
-        mock_stream.write_all(&response_from_peer)?;
+        mock_stream
+            .write_all(&response_from_peer)
+            .context("writing request message to stream")?;
 
         let res = bt_client.shake_hands(
             &mut mock_stream,
             magnet_link.info_hash,
             PEER_ID,
-            Extension::MagnetLink,
+            &Extension::MagnetLink,
         )?;
         assert_eq!(response_from_peer, res); // What is returned is what was initialy written in
                                              // the "stream"
@@ -418,7 +462,7 @@ mod test {
     }
 
     macro_rules! download_piece {
-        ($($name:ident: $piece_size:expr, $piece_index:expr, $block_size:expr)*) => {
+        ($($name:ident: $piece_size:expr, $piece_index:expr, $block_size:expr, $extension:expr)*) => {
         $(
             #[test]
             fn $name() -> anyhow::Result<()> {
@@ -448,6 +492,11 @@ mod test {
                 let mut mock_stream = VecDeque::new();
 
                 mock_stream.write_all(&Message::BitField { payload: vec![] }.to_bytes()?)?;
+
+                if $extension.is_some() {
+                    mock_stream.write_all(&Message::Extension{ extensions_info: ExtensionsInfo::new(16) }.to_bytes()?)?;
+                }
+
                 mock_stream.write_all(&Message::Unchoke.to_bytes()?)?;
 
                 let piece_info = torrent.pieces_info();
@@ -469,7 +518,11 @@ mod test {
                 }
 
                 let client = BtClient::with_block_size(BLOCK_SIZE as u32);
-                let res = client.piece_download(&mut mock_stream, &torrent, PIECE_INDEX as u32)?;
+                let res = client.piece_download_with_extension(&mut mock_stream, &torrent, PIECE_INDEX as u32, $extension.as_ref().unwrap_or(&Extension::None))?;
+
+                if $extension.is_some() {
+                    assert!(matches!(Message::read_from(&mut mock_stream)?, Message::Extension { .. }));
+                }
 
                 assert_eq!(Message::Interested, Message::read_from(&mut mock_stream)?);
                 for _ in 0..(PIECES_SIZE / BLOCK_SIZE) {
@@ -489,7 +542,8 @@ mod test {
         }
     }
 
-    download_piece!(first_piece: 100, 0, 19);
-    download_piece!(second_piece: 100, 2, 19);
-    download_piece!(download_last_block_of_last_piece: 160, 2, 43);
+    download_piece!(first_piece: 100, 0, 19, None::<Extension>);
+    download_piece!(second_piece: 100, 2, 19, None::<Extension>);
+    download_piece!(download_last_block_of_last_piece: 160, 2, 43, None::<Extension>);
+    download_piece!(first_piece_manget: 100, 0, 22, Some(Extension::MagnetLink));
 }

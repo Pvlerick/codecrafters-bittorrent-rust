@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use bytes::BufMut;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq)]
 pub struct Handshake {
@@ -47,7 +48,7 @@ impl From<&[u8; 68]> for Handshake {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Extension {
     None,
     MagnetLink,
@@ -136,6 +137,9 @@ pub enum Message {
         begin: u32,
         block: Vec<u8>,
     },
+    Extension {
+        extensions_info: ExtensionsInfo,
+    },
 }
 
 impl Message {
@@ -181,6 +185,16 @@ impl Message {
                 buf.extend_from_slice(block);
                 Ok(buf)
             }
+            // extension: <len=0001+X><id=20><extensions_stuff>
+            Message::Extension { extensions_info } => {
+                let payload = serde_bencode::to_bytes(extensions_info)?;
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&Message::usize_to_u32_be_bytes(payload.len() + 2)?);
+                buf.push(20); // message id
+                buf.push(0); // extension handshake id
+                buf.extend_from_slice(&payload);
+                Ok(buf)
+            }
         }
     }
 
@@ -210,8 +224,11 @@ impl Message {
                 begin: u32::from_be_bytes(input[9..13].try_into().expect("cannot fail")),
                 block: input[13..].to_vec(),
             }),
-            x => Err(anyhow!(
-                "unrecognized message id: {x} or invalid message length"
+            20 => Ok(Message::Extension {
+                extensions_info: serde_bencode::from_bytes(&input[6..])?,
+            }),
+            id => Err(anyhow!(
+                "unrecognized message id: {id} or invalid message length"
             )),
         }
     }
@@ -224,13 +241,18 @@ impl Message {
             .context("converting u32 to usize")?;
         match mark[4] {
             0..=2 => Message::from_bytes(&mark),
-            5..=7 => {
+            5..=7 | 20 => {
+                dbg!(len);
                 let mut message = vec![0u8; 4 + len];
                 message[..5].copy_from_slice(&mark);
-                input.read_exact(&mut message[5..len + 4])?;
+                dbg!(&message);
+                input
+                    .read_exact(&mut message[5..len + 4])
+                    .context("reading exact number of bytes from the reader")?;
+                dbg!(&message);
                 Message::from_bytes(&message)
             }
-            x => Err(anyhow!("unrecognized message id: {x}")),
+            id => Err(anyhow!("unrecognized message id: {id}")),
         }
     }
 }
@@ -244,13 +266,39 @@ impl Display for Message {
             Message::Unchoke => write!(f, "Unchoke"),
             Message::Request { .. } => write!(f, "Request"),
             Message::Piece { .. } => write!(f, "Piece"),
+            Message::Extension { .. } => write!(f, "Extensions"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ExtensionsInfo {
+    #[serde(rename = "m")]
+    pub metdata: Metadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct Metadata {
+    pub ut_metadata: Option<u8>,
+    pub ut_pex: Option<u8>,
+}
+
+impl ExtensionsInfo {
+    pub fn new(ut_metadata: u8) -> Self {
+        ExtensionsInfo {
+            metdata: Metadata {
+                ut_metadata: Some(ut_metadata),
+                ut_pex: None,
+            },
         }
     }
 }
 
 #[cfg(test)]
 mod message_test {
-    use crate::peer_messages::Message;
+    use bytes::BufMut;
+
+    use crate::peer_messages::{ExtensionsInfo, Message};
 
     #[test]
     fn ser_deser_message_bitfield() -> anyhow::Result<()> {
@@ -349,6 +397,24 @@ mod message_test {
             block: vec![],
         };
         let bytes = vec![0, 0, 0, 9, 7, 0, 0, 0, 4, 0, 0, 0, 12];
+
+        assert_eq!(bytes, msg.to_bytes()?);
+        assert_eq!(msg, Message::from_bytes(&bytes)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ser_deser_message_extension() -> anyhow::Result<()> {
+        let extensions_info = ExtensionsInfo::new(16);
+        let msg = Message::Extension { extensions_info };
+
+        let payload = b"d1:md11:ut_metadatai16eee";
+        let mut bytes = vec![0, 0, 0];
+        bytes.push(payload.len() as u8 + 2);
+        bytes.push(20);
+        bytes.push(0);
+        bytes.put_slice(payload);
 
         assert_eq!(bytes, msg.to_bytes()?);
         assert_eq!(msg, Message::from_bytes(&bytes)?);
