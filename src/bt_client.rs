@@ -9,12 +9,13 @@ use anyhow::{anyhow, Context};
 use reqwest::Url;
 
 use crate::{
-    magnet_links::MagnetLink,
     peer_messages::{
         Extension, ExtensionMessage, ExtensionsData, ExtensionsInfo, Handshake, Message,
     },
-    torrent::{Info, Torrent},
+    torrent::Info,
+    torrent_info::TorrentInfo,
     tracker,
+    tracker_info::TrackerInfo,
 };
 
 pub const PEER_ID: &str = "alice_is_1_feet_tall";
@@ -211,48 +212,32 @@ impl<T: HttpClient> BtClient<T> {
         Ok(buf)
     }
 
-    pub fn download_piece(
+    pub fn download_piece<TI: TorrentInfo>(
         &self,
-        torrent: &Torrent,
+        torrent_info: &TI,
         peer: SocketAddrV4,
         index: u32,
     ) -> anyhow::Result<Vec<u8>> {
         let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
         self.shake_hands(
             &mut tcp_stream,
-            torrent.info_hash()?,
+            torrent_info.info_hash()?,
             PEER_ID,
             &Extension::None,
         )
         .context("shaking hands with peer")?;
-        self.piece_download_with_extension(&mut tcp_stream, torrent, index, &Extension::None)
+        self.piece_download(&mut tcp_stream, torrent_info, index)
     }
 
-    pub fn download_piece_with_extension(
-        &self,
-        torrent: &Torrent,
-        peer: SocketAddrV4,
-        extension: &Extension,
-        index: u32,
-    ) -> anyhow::Result<Vec<u8>> {
-        let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
-
-        self.shake_hands(&mut tcp_stream, torrent.info_hash()?, PEER_ID, extension)
-            .context("shaking hands with peer")?;
-
-        self.piece_download_with_extension(&mut tcp_stream, torrent, index, extension)
-    }
-
-    fn piece_download_with_extension<S: Read + Write + Debug>(
+    fn piece_download<S: Read + Write + Debug, TI: TorrentInfo>(
         &self,
         stream: &mut S,
-        torrent: &Torrent,
+        torrent_info: &TI,
         index: u32,
-        extension: &Extension,
     ) -> anyhow::Result<Vec<u8>> {
         use state::State::*;
         let mut state = WaitingForBitField;
-        let piece_size = torrent.pieces_info();
+        let piece_size = torrent_info.pieces_info();
         let piece_size = piece_size
             .get(index as usize)
             .context("no piece at this index")?;
@@ -271,35 +256,14 @@ impl<T: HttpClient> BtClient<T> {
             let msg = Message::read_from(stream).context("reading message from stream")?;
 
             match (&state, msg) {
-                (WaitingForBitField, Message::BitField { .. }) => match extension {
-                    Extension::None => {
-                        stream
-                            .write_all(&Message::Interested.to_bytes()?)
-                            .context("writing interested message to stream")?;
-                        state = WaitingForUnchoke;
-                    }
-                    Extension::MagnetLink => {
-                        stream
-                            .write_all(
-                                &Message::Extension {
-                                    message: ExtensionMessage::Info {
-                                        info: ExtensionsInfo::new(16),
-                                    },
-                                }
-                                .to_bytes()?,
-                            )
-                            .context("writing extension message to stream")?;
-                        state = WaitingForExtensionHandshake;
-                    }
-                },
-                (WaitingForExtensionHandshake, Message::Extension { .. }) => {
+                (WaitingForBitField, Message::BitField { .. }) => {
                     stream
                         .write_all(&Message::Interested.to_bytes()?)
                         .context("writing interested message to stream")?;
                     state = WaitingForUnchoke;
                 }
                 (WaitingForUnchoke, Message::Unchoke) => {
-                    for block_info in torrent
+                    for block_info in torrent_info
                         .blocks_info(
                             index.try_into().context("u32 does not fit in usize")?,
                             self.block_size
@@ -348,22 +312,25 @@ impl<T: HttpClient> BtClient<T> {
         Ok(piece)
     }
 
-    pub fn download(&self, torrent: &Torrent, peer: SocketAddrV4) -> anyhow::Result<Vec<u8>> {
-        let mut file = vec![0u8; torrent.total_len()];
-        for piece_info in torrent.pieces_info() {
+    pub fn download<TI: TorrentInfo>(
+        &self,
+        torrent_info: &TI,
+        peer: SocketAddrV4,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut file = vec![0u8; torrent_info.total_len()];
+        for piece_info in torrent_info.pieces_info() {
             let mut tcp_stream = TcpStream::connect(peer).context("opening socket to peer")?;
             self.shake_hands(
                 &mut tcp_stream,
-                torrent.info_hash()?,
+                torrent_info.info_hash()?,
                 PEER_ID,
                 &Extension::None,
             )
             .context("shaking hands with peer")?;
-            let piece = self.piece_download_with_extension(
+            let piece = self.piece_download(
                 &mut tcp_stream,
-                torrent,
+                torrent_info,
                 piece_info.index.try_into().context("usize to u32")?,
-                &Extension::None,
             )?;
             file[piece_info.offset..piece_info.offset + piece_info.length].copy_from_slice(&piece);
         }
@@ -375,49 +342,9 @@ impl<T: HttpClient> BtClient<T> {
 mod state {
     pub enum State {
         WaitingForBitField,
-        WaitingForExtensionHandshake,
         WaitingForUnchoke,
         WaitingForPieceBlock,
     }
-}
-
-pub trait TrackerInfo {
-    fn tracker_url(&self) -> anyhow::Result<Url>;
-}
-
-impl TrackerInfo for Torrent {
-    fn tracker_url(&self) -> anyhow::Result<Url> {
-        tracker_url(&self.announce, &self.info_hash()?, self.total_len())
-    }
-}
-
-impl TrackerInfo for MagnetLink {
-    fn tracker_url(&self) -> anyhow::Result<Url> {
-        tracker_url(&self.announce.to_string(), &self.info_hash, 999)
-    }
-}
-
-fn tracker_url(announce_url: &str, info_hash: &[u8; 20], left: usize) -> anyhow::Result<Url> {
-    let info_hash = hex::encode(info_hash)
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(2)
-        .map(|i| format!("%{}{}", i[0], i[1]))
-        .collect::<Vec<_>>()
-        .concat();
-
-    Url::parse_with_params(
-        format!("{}?info_hash={}", announce_url, info_hash).as_str(),
-        &[
-            ("peer_id", PEER_ID),
-            ("port", "6881"),
-            ("uploaded", "0"),
-            ("downloaded", "0"),
-            ("left", format!("{}", left.to_string()).as_str()),
-            ("compact", "1"),
-        ],
-    )
-    .context("creating tracker url")
 }
 
 #[cfg(test)]
@@ -435,7 +362,7 @@ mod test {
     use crate::{
         bt_client::{BtClient, PEER_ID},
         magnet_links::MagnetLink,
-        peer_messages::{Extension, ExtensionMessage, ExtensionsInfo, Message},
+        peer_messages::{Extension, Message},
         sha1,
         torrent::Torrent,
     };
@@ -557,7 +484,7 @@ mod test {
     }
 
     macro_rules! download_piece {
-        ($($name:ident: $piece_size:expr, $piece_index:expr, $block_size:expr, $extension:expr)*) => {
+        ($($name:ident: $piece_size:expr, $piece_index:expr, $block_size:expr)*) => {
         $(
             #[test]
             fn $name() -> anyhow::Result<()> {
@@ -588,10 +515,6 @@ mod test {
 
                 mock_stream.write_all(&Message::BitField { payload: vec![] }.to_bytes()?)?;
 
-                if $extension.is_some() {
-                    mock_stream.write_all(&Message::Extension{ message: ExtensionMessage::Info { info: ExtensionsInfo::new(16) } }.to_bytes()?)?;
-                }
-
                 mock_stream.write_all(&Message::Unchoke.to_bytes()?)?;
 
                 let piece_info = torrent.pieces_info();
@@ -613,11 +536,7 @@ mod test {
                 }
 
                 let client = BtClient::with_block_size(BLOCK_SIZE as u32);
-                let res = client.piece_download_with_extension(&mut mock_stream, &torrent, PIECE_INDEX as u32, $extension.as_ref().unwrap_or(&Extension::None))?;
-
-                if $extension.is_some() {
-                    assert!(matches!(Message::read_from(&mut mock_stream)?, Message::Extension { .. }));
-                }
+                let res = client.piece_download(&mut mock_stream, &torrent, PIECE_INDEX as u32)?;
 
                 assert_eq!(Message::Interested, Message::read_from(&mut mock_stream)?);
                 for _ in 0..(PIECES_SIZE / BLOCK_SIZE) {
@@ -637,8 +556,7 @@ mod test {
         }
     }
 
-    download_piece!(first_piece: 100, 0, 19, None::<Extension>);
-    download_piece!(second_piece: 100, 2, 19, None::<Extension>);
-    download_piece!(download_last_block_of_last_piece: 160, 2, 43, None::<Extension>);
-    download_piece!(first_piece_manget: 100, 0, 22, Some(Extension::MagnetLink));
+    download_piece!(first_piece: 100, 0, 19);
+    download_piece!(second_piece: 100, 2, 19);
+    download_piece!(download_last_block_of_last_piece: 160, 2, 43);
 }

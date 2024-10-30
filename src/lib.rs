@@ -6,4 +6,6 @@ pub mod magnet_links;
 pub mod peer_messages;
 pub mod sha1;
 pub mod torrent;
+pub mod torrent_info;
 pub mod tracker;
+pub mod tracker_info;

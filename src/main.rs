@@ -130,7 +130,18 @@ fn main() -> anyhow::Result<()> {
             magnet_link,
             start,
         } => {
-            todo!()
+            let magnet_link = MagnetLink::parse(magnet_link).context("parsing magnet link")?;
+            let client = BtClient::new();
+            let peers = client.get_peers(&magnet_link)?;
+            let peer = peers.first().context("getting first peer")?;
+            let info: Info =
+                client.get_magnet_info(magnet_link.info_hash, *peer, Extension::MagnetLink)?;
+            let content = client.download_piece(&(magnet_link, info), *peer, start)?;
+            match output {
+                Some(file) => std::fs::write(file, &content)?,
+                None => stdout().write_all(&content)?,
+            }
+            Ok(())
         }
     }
 }
