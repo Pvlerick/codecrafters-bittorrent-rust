@@ -158,7 +158,7 @@ impl<T: HttpClient> BtClient<T> {
             .context("writing extension message to stream")?;
 
         msg = Message::read_from(&mut tcp_stream).context("reading message from stream")?;
-        let extension_msg_id = match msg {
+        let _ = match msg {
             Message::Extension {
                 message: ExtensionMessage::Info { info },
             } => info.metdata.ut_metadata.unwrap(),

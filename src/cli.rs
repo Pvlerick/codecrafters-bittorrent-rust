@@ -49,6 +49,14 @@ pub enum Command {
     MagnetInfo {
         magnet_link: String,
     },
+    #[command(name = "magnet_download_piece")]
+    MagnetDownloadPiece {
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        magnet_link: String,
+        #[arg(default_value_t = 0)]
+        start: u32,
+    },
 }
 
 #[cfg(test)]

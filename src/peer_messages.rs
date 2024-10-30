@@ -257,7 +257,8 @@ impl Message {
                     },
                 }),
                 _ => {
-                    let end_data = &input[7..].iter().position(|i| *i == 100).unwrap() + 7; // find 'd'
+                    // any other case is treated as the data message
+                    let end_data = &input[7..].iter().position(|i| *i == 100).unwrap() + 7; // find 'd', start of the next dict
                     dbg!(String::from_utf8(input[6..end_data].to_vec())?);
                     let data: ExtensionsData = serde_bencode::from_bytes(&input[6..end_data])
                         .context("deserializing data dict")?;
@@ -269,7 +270,7 @@ impl Message {
                             info: Some(info),
                         },
                     })
-                } // id => Err(anyhow!("unrecognized extension message id: {id}")),
+                }
             },
             id => Err(anyhow!(
                 "unrecognized message id: {id} or invalid message length"

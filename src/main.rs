@@ -125,5 +125,12 @@ fn main() -> anyhow::Result<()> {
 
             Ok(())
         }
+        Command::MagnetDownloadPiece {
+            output,
+            magnet_link,
+            start,
+        } => {
+            todo!()
+        }
     }
 }
