@@ -57,6 +57,7 @@ pub enum Command {
         #[arg(default_value_t = 0)]
         start: u32,
     },
+    #[command(name = "magnet_download")]
     MagnetDownload {
         #[arg(short, long)]
         output: Option<PathBuf>,
